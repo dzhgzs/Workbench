@@ -1,0 +1,6 @@
+{
+  "name": "KUAN NEURAL STUDIO | 创作者大脑",
+  "description": "让每一条链接双向生长的全流程创作者个人知识图谱与数字化大脑系统",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
