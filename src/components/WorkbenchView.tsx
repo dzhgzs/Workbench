@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useId } from 'react';
 import { NeuralSphere } from './NeuralSphere';
 import { NodeInspectorDrawer } from './NodeInspectorDrawer';
 import { SATELLITE_NODES, WORK_ITEMS, MIND_MAP_TREE } from '../data/mockData';
@@ -20,7 +20,11 @@ import {
   ArrowRight,
   Move,
   RotateCcw,
-  GripVertical
+  GripVertical,
+  ZoomIn,
+  ZoomOut,
+  Hand,
+  Compass
 } from 'lucide-react';
 
 interface WorkbenchViewProps {
@@ -51,6 +55,21 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
   const [selectedLeafId, setSelectedLeafId] = useState<string>('opus-35-node');
   const [searchQuery, setSearchQuery] = useState('');
   const [copilotAnswer, setCopilotAnswer] = useState<string | null>(null);
+
+  // Hover states for SVG neural energy pulse animation
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hoveredLeafId, setHoveredLeafId] = useState<string | null>(null);
+
+  // Zoom & Pan states for Mind Map canvas
+  const [zoomScale, setZoomScale] = useState<number>(1);
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState<boolean>(false);
+  const panStartRef = useRef<{ x: number; y: number; startPanX: number; startPanY: number }>({
+    x: 0,
+    y: 0,
+    startPanX: 0,
+    startPanY: 0,
+  });
 
   // Orbital Satellite positions state
   const [satellitePositions, setSatellitePositions] = useState<Record<string, { x: number; y: number }>>(
@@ -85,12 +104,14 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
 
   // Container refs for measuring center
   const orbitalContainerRef = useRef<HTMLDivElement>(null);
+  const mindMapCanvasRef = useRef<HTMLDivElement>(null);
 
   // Drag refs to track live dragging synchronously without state delay
   const activeOrbitalDragId = useRef<string | null>(null);
   const activeBranchDragId = useRef<string | null>(null);
+  const isPanningActiveRef = useRef<boolean>(false);
 
-  // Unified drag start handler
+  // Unified drag start handler for orbital satellite nodes
   const handleStartDrag = (e: React.MouseEvent | React.PointerEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -131,9 +152,51 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     setDraggingBranchId(branchId);
   };
 
-  // Persistent window-level smooth dragging listener registered once on mount
+  // Canvas Pan Handlers
+  const handleCanvasPanStart = (e: React.MouseEvent) => {
+    // Only pan if clicking on canvas background or holding space/middle click
+    if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('canvas-pannable-bg')) {
+      return;
+    }
+    e.preventDefault();
+    isPanningActiveRef.current = true;
+    setIsPanning(true);
+    panStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      startPanX: panOffset.x,
+      startPanY: panOffset.y,
+    };
+  };
+
+  // Mouse wheel zoom
+  const handleCanvasWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = -e.deltaY * 0.0012;
+    setZoomScale((prev) => {
+      const next = prev + zoomFactor;
+      return Math.min(2.0, Math.max(0.5, parseFloat(next.toFixed(2))));
+    });
+  };
+
+  // Zoom control buttons
+  const handleZoomIn = () => {
+    setZoomScale((prev) => Math.min(2.0, parseFloat((prev + 0.15).toFixed(2))));
+  };
+
+  const handleZoomOut = () => {
+    setZoomScale((prev) => Math.max(0.5, parseFloat((prev - 0.15).toFixed(2))));
+  };
+
+  const handleResetView = () => {
+    setZoomScale(1);
+    setPanOffset({ x: 0, y: 0 });
+  };
+
+  // Persistent window-level smooth dragging and panning listener
   useEffect(() => {
     const handleMove = (e: MouseEvent | PointerEvent) => {
+      // 1. Orbital node dragging
       const orbitalId = activeOrbitalDragId.current;
       if (orbitalId) {
         const dx = e.clientX - dragStartRef.current.mouseX;
@@ -150,6 +213,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
         }));
       }
 
+      // 2. Branch spatial dragging
       const branchId = activeBranchDragId.current;
       if (branchId) {
         const dx = e.clientX - branchDragRef.current.mouseX;
@@ -165,13 +229,25 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
           },
         }));
       }
+
+      // 3. Canvas panning
+      if (isPanningActiveRef.current) {
+        const dx = e.clientX - panStartRef.current.x;
+        const dy = e.clientY - panStartRef.current.y;
+        setPanOffset({
+          x: panStartRef.current.startPanX + dx,
+          y: panStartRef.current.startPanY + dy,
+        });
+      }
     };
 
     const handleUp = () => {
       activeOrbitalDragId.current = null;
       activeBranchDragId.current = null;
+      isPanningActiveRef.current = false;
       setDraggingNodeId(null);
       setDraggingBranchId(null);
+      setIsPanning(false);
     };
 
     window.addEventListener('pointermove', handleMove);
@@ -231,6 +307,8 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     setSatellitePositions(DEFAULT_SATELLITE_OFFSETS);
     setBranchOffsets({});
     setMindMapData(MIND_MAP_TREE);
+    setZoomScale(1);
+    setPanOffset({ x: 0, y: 0 });
   };
 
   const handleSatelliteClick = (node: SatelliteNode) => {
@@ -288,16 +366,18 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
         <div className="flex items-center gap-2">
           <span className="px-3 py-1 rounded-full neuro-flat-sm text-[10px] font-semibold text-[#667588] border border-white/70 flex items-center gap-1.5">
             <Move className="w-3 h-3 text-[#ea384c]" />
-            <span>支持按住节点自由拖拽重构布局</span>
+            <span>
+              {mode === 'orbital' ? '悬停节点激活神经脉冲 · 拖拽调整轨道' : '按住空白平移画布 · 滚轮缩放导图'}
+            </span>
           </span>
 
           <button
             onClick={handleResetLayout}
-            className="neuro-btn px-2.5 py-1 rounded-full text-[11px] font-medium text-[#505d70] hover:text-[#ea384c] flex items-center gap-1 border border-white/70"
-            title="重置星系与思维导图默认坐标"
+            className="neuro-btn px-2.5 py-1 rounded-full text-[11px] font-medium text-[#505d70] hover:text-[#ea384c] flex items-center gap-1 border border-white/70 shadow-sm"
+            title="重置星系与思维导图默认坐标与缩放"
           >
             <RotateCcw className="w-3 h-3" />
-            <span>重置布局</span>
+            <span>重置视口与布局</span>
           </button>
         </div>
 
@@ -340,7 +420,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
         </div>
 
         {/* View Mode Switcher Pill */}
-        <div className="neuro-flat rounded-full p-1 border border-white/80 flex items-center text-xs font-semibold">
+        <div className="neuro-flat rounded-full p-1 border border-white/80 flex items-center text-xs font-semibold shadow-sm">
           <button
             onClick={() => onToggleMode('orbital')}
             className={`px-3 py-1 rounded-full transition-all ${
@@ -369,7 +449,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
         {mode === 'orbital' ? (
           /* ========================================================
              MODE A: ORBITAL CONSTELLATION VIEW (Video 0:03 - 0:11)
-             With Drag-and-Drop & Dynamic SVG Connector Beziers!
+             With SVG Neural Pulse Flow Animations & Interactive Drag!
              ======================================================== */
           <div
             ref={orbitalContainerRef}
@@ -380,48 +460,95 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
             <div className="absolute w-[440px] h-[440px] rounded-full border border-solid border-[#d5dde9]/80 pointer-events-none" />
             <div className="absolute w-[360px] h-[360px] rounded-full border border-dashed border-[#ea384c]/30 pointer-events-none animate-spin [animation-duration:90s]" />
 
-            {/* Dynamic SVG Connecting Lines from Center (0,0) to each Satellite Node */}
+            {/* Dynamic SVG Connecting Lines with Real Neural Pulse Flows */}
             <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible">
               <defs>
                 <linearGradient id="orbitLineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stopColor="#ea384c" stopOpacity="0.8" />
                   <stop offset="70%" stopColor="#ff758f" stopOpacity="0.4" />
-                  <stop offset="100%" stopColor="#a0aec0" stopOpacity="0.2" />
+                  <stop offset="100%" stopColor="#a0aec0" stopOpacity="0.25" />
                 </linearGradient>
-                <filter id="glowLine" x="-20%" y="-20%" width="140%" height="140%">
-                  <feGaussianBlur stdDeviation="2" result="blur" />
-                  <feComposite in="SourceGraphic" in2="blur" operator="over" />
+
+                <linearGradient id="orbitActiveGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#ff3344" stopOpacity="1" />
+                  <stop offset="50%" stopColor="#ff758f" stopOpacity="0.9" />
+                  <stop offset="100%" stopColor="#ff0033" stopOpacity="0.8" />
+                </linearGradient>
+
+                <radialGradient id="pulseSparkGrad" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
+                  <stop offset="40%" stopColor="#ff4d6d" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="#ea384c" stopOpacity="0" />
+                </radialGradient>
+
+                <filter id="glowNeural" x="-30%" y="-30%" width="160%" height="160%">
+                  <feGaussianBlur stdDeviation="3.5" result="blur1" />
+                  <feGaussianBlur stdDeviation="1.5" result="blur2" />
+                  <feMerge>
+                    <feMergeNode in="blur1" />
+                    <feMergeNode in="blur2" />
+                    <feMergeNode in="SourceGraphic" />
+                  </feMerge>
                 </filter>
               </defs>
 
-              {/* Render dynamic Bezier curve from center (50%, 50%) to each satellite position */}
+              {/* Render dynamic Bezier curve from center (0,0) to each satellite position */}
               {SATELLITE_NODES.map((node) => {
                 const pos = satellitePositions[node.id] || { x: 0, y: 0 };
                 const isDraggingThis = draggingNodeId === node.id;
+                const isHovered = hoveredNodeId === node.id;
                 
-                // SVG coordinates centered at (50%, 50%)
-                // We use transform: translate(50%, 50%) for the SVG elements
                 const midX = pos.x * 0.45;
                 const midY = pos.y * 0.45;
+                const pathId = `orbital-path-${node.id}`;
+                const pathData = `M 0 0 Q ${midX} ${midY} ${pos.x} ${pos.y}`;
 
                 return (
                   <g key={`svg-link-${node.id}`} style={{ transform: 'translate(50%, 50%)' }}>
+                    {/* Underlying guide line */}
                     <path
-                      d={`M 0 0 Q ${midX} ${midY} ${pos.x} ${pos.y}`}
-                      stroke="url(#orbitLineGrad)"
-                      strokeWidth={isDraggingThis ? '3' : '2'}
-                      strokeDasharray={isDraggingThis ? 'none' : '4 5'}
+                      id={pathId}
+                      d={pathData}
+                      stroke={isHovered || isDraggingThis ? 'url(#orbitActiveGrad)' : 'url(#orbitLineGrad)'}
+                      strokeWidth={isHovered ? '3.5' : isDraggingThis ? '3' : '2'}
+                      strokeDasharray={isHovered ? 'none' : '4 5'}
                       fill="none"
-                      filter="url(#glowLine)"
+                      filter={isHovered ? 'url(#glowNeural)' : 'none'}
+                      className="transition-all duration-300"
                     />
-                    {/* Pulsing light particle on the link */}
-                    <circle
-                      cx={pos.x * 0.5}
-                      cy={pos.y * 0.5}
-                      r={isDraggingThis ? 4 : 2.5}
-                      fill="#ea384c"
-                      opacity="0.9"
-                    />
+
+                    {/* Animated Energy Pulses (Flowing towards satellite node) */}
+                    <circle r={isHovered ? 5.5 : 3.5} fill="url(#pulseSparkGrad)">
+                      <animateMotion
+                        dur={isHovered ? '1s' : '3.2s'}
+                        repeatCount="indefinite"
+                        path={pathData}
+                        keyPoints="0;1"
+                        keyTimes="0;1"
+                      />
+                    </circle>
+
+                    {/* Secondary trailing particle on hover */}
+                    {isHovered && (
+                      <circle r="4" fill="#ffffff" opacity="0.9">
+                        <animateMotion
+                          dur="1s"
+                          begin="0.4s"
+                          repeatCount="indefinite"
+                          path={pathData}
+                          keyPoints="0;1"
+                          keyTimes="0;1"
+                        />
+                      </circle>
+                    )}
+
+                    {/* Energy wave ripple at target point */}
+                    {isHovered && (
+                      <circle cx={pos.x} cy={pos.y} r="8" fill="none" stroke="#ea384c" strokeWidth="1.5">
+                        <animate attributeName="r" values="6;16" dur="1.2s" repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.8;0" dur="1.2s" repeatCount="indefinite" />
+                      </circle>
+                    )}
                   </g>
                 );
               })}
@@ -446,7 +573,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
               {/* 3D WebGL Neural Core */}
               <NeuralSphere
                 size={300}
-                pulsingIntensity={1.2}
+                pulsingIntensity={hoveredNodeId ? 1.6 : 1.2}
                 onClick={() => onToggleMode('mindmap')}
                 className="z-10"
               />
@@ -466,6 +593,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
               const pos = satellitePositions[node.id] || { x: 0, y: 0 };
               const isDragging = draggingNodeId === node.id;
               const isLibrary = node.id === 'library';
+              const isHovered = hoveredNodeId === node.id;
 
               return (
                 <div
@@ -474,20 +602,24 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   onMouseDown={(e) => handleStartDrag(e, node.id)}
                   onPointerUp={() => handleEndDrag(node)}
                   onMouseUp={() => handleEndDrag(node)}
+                  onMouseEnter={() => setHoveredNodeId(node.id)}
+                  onMouseLeave={() => setHoveredNodeId(null)}
                   style={{
                     transform: `translate(calc(-50% + ${pos.x}px), calc(-50% + ${pos.y}px))`,
                     touchAction: 'none',
                   }}
-                  className={`absolute top-1/2 left-1/2 z-30 cursor-grab active:cursor-grabbing select-none transition-shadow ${
+                  className={`absolute top-1/2 left-1/2 z-30 cursor-grab active:cursor-grabbing select-none transition-transform duration-150 ${
                     isDragging
                       ? 'scale-105 shadow-2xl ring-2 ring-[#ea384c] z-40'
+                      : isHovered
+                      ? 'scale-105 shadow-xl ring-2 ring-[#ea384c]/60'
                       : 'hover:scale-[1.03]'
                   }`}
                 >
                   <div
                     className={`neuro-flat rounded-2xl p-3.5 border flex items-center gap-3 ${
-                      isLibrary
-                        ? 'border-red-300/90 ring-2 ring-[#ea384c]/20'
+                      isLibrary || isHovered
+                        ? 'border-red-300/90 ring-1 ring-[#ea384c]/30'
                         : 'border-white/90'
                     }`}
                   >
@@ -505,12 +637,15 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                             : 'bg-amber-400'
                         }`}
                       />
+                      {isHovered && (
+                        <div className="absolute inset-0 bg-red-500/20 animate-ping rounded-full" />
+                      )}
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5">
                         <span
                           className={`text-sm font-extrabold ${
-                            isLibrary ? 'text-[#ea384c]' : 'text-[#191f2c]'
+                            isLibrary || isHovered ? 'text-[#ea384c]' : 'text-[#191f2c]'
                           }`}
                         >
                           {node.count}
@@ -537,15 +672,15 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
         ) : (
           /* ========================================================
              MODE B: MIND MAP & HIERARCHICAL GRAPH (Video 0:12 - 0:16)
-             With Drag-and-Drop Reordering & Branch Spatial Dragging!
+             With Pan & Zoom Canvas, Dynamic SVG Beziers, Energy Pulses!
              ======================================================== */
-          <div className="w-full flex items-start gap-8 min-h-[500px]">
-            {/* Left Category Spine + Mini Neural Core */}
-            <div className="w-64 neuro-flat rounded-3xl p-4 border border-white/80 space-y-4 shrink-0">
+          <div className="relative w-full flex items-start gap-8 min-h-[500px]">
+            {/* Left Category Spine + Mini Neural Core (Fixed dock) */}
+            <div className="w-64 neuro-flat rounded-3xl p-4 border border-white/80 space-y-4 shrink-0 z-20 shadow-md">
               {/* Mini 3D Core in Left Dock */}
               <div className="flex items-center gap-3 pb-3 border-b border-gray-200/70">
                 <div className="w-14 h-14 rounded-2xl neuro-inset flex items-center justify-center overflow-hidden shrink-0">
-                  <NeuralSphere size={56} interactive={false} pulsingIntensity={0.8} />
+                  <NeuralSphere size={56} interactive={false} pulsingIntensity={hoveredLeafId ? 1.4 : 0.8} />
                 </div>
                 <div>
                   <h3 className="text-xs font-bold text-[#1f2633]">神经中枢骨干</h3>
@@ -598,11 +733,60 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
               </div>
             </div>
 
-            {/* Mind Map Tree Hierarchy Canvas */}
-            <div className="flex-1 neuro-inset rounded-3xl p-6 border border-white/60 relative overflow-x-auto min-h-[500px]">
-              {/* Breadcrumb Path & Layout Reset on Top */}
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2 text-xs text-[#7c8b9e]">
+            {/* Mind Map Canvas (With Pan & Zoom Container) */}
+            <div
+              ref={mindMapCanvasRef}
+              onMouseDown={handleCanvasPanStart}
+              onWheel={handleCanvasWheel}
+              className={`flex-1 neuro-inset rounded-3xl p-6 border border-white/60 relative overflow-hidden min-h-[540px] select-none canvas-pannable-bg ${
+                isPanning ? 'cursor-grabbing' : 'cursor-grab'
+              }`}
+              style={{
+                backgroundImage: 'radial-gradient(rgba(180, 192, 210, 0.4) 1px, transparent 0)',
+                backgroundSize: '24px 24px',
+                backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
+              }}
+            >
+              {/* Floating Canvas Zoom & Pan Control Bar */}
+              <div className="absolute bottom-4 right-4 z-30 neuro-flat rounded-full p-1.5 border border-white/90 flex items-center gap-1.5 shadow-lg">
+                <button
+                  onClick={handleZoomOut}
+                  className="w-7 h-7 rounded-full neuro-btn flex items-center justify-center text-[#556377] hover:text-[#ea384c]"
+                  title="缩小画布 (Zoom Out)"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  onClick={handleResetView}
+                  className="px-2.5 py-1 rounded-full neuro-btn text-[10px] font-bold text-[#1f2633] hover:text-[#ea384c]"
+                  title="恢复 100% 比例并居中"
+                >
+                  {Math.round(zoomScale * 100)}%
+                </button>
+
+                <button
+                  onClick={handleZoomIn}
+                  className="w-7 h-7 rounded-full neuro-btn flex items-center justify-center text-[#556377] hover:text-[#ea384c]"
+                  title="放大画布 (Zoom In)"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+
+                <div className="w-[1px] h-4 bg-gray-300 mx-0.5" />
+
+                <button
+                  onClick={handleResetView}
+                  className="w-7 h-7 rounded-full neuro-btn flex items-center justify-center text-[#556377] hover:text-[#ea384c]"
+                  title="居中重置视口"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Breadcrumb Path & Tooltip (Stationary inside top canvas) */}
+              <div className="flex items-center justify-between mb-4 z-20 relative pointer-events-none">
+                <div className="flex items-center gap-2 text-xs text-[#7c8b9e] pointer-events-auto">
                   <span>创作者大脑</span>
                   <ChevronRight className="w-3 h-3 text-[#9fb0c4]" />
                   <span className="font-semibold text-[#444f61]">24 作品库</span>
@@ -612,17 +796,71 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   </span>
                 </div>
 
-                <div className="text-[11px] text-[#8391a3] flex items-center gap-1 bg-white/50 px-3 py-1 rounded-full border border-white">
-                  <GripVertical className="w-3.5 h-3.5 text-[#ea384c]" />
-                  <span>可拖拽卡片上下排序或拖拽分支头移动整组</span>
+                <div className="text-[10px] text-[#8391a3] flex items-center gap-1.5 bg-white/70 backdrop-blur-sm px-3 py-1 rounded-full border border-white/80 shadow-sm pointer-events-auto">
+                  <Hand className="w-3 h-3 text-[#ea384c]" />
+                  <span>按住空白平移 · 滚轮缩放 · 悬停节点流转能量</span>
                 </div>
               </div>
 
-              {/* Tree Branches Structure */}
-              <div className="flex items-start gap-12">
+              {/* Scalable & Pannable Mind Map Content Container */}
+              <div
+                style={{
+                  transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomScale})`,
+                  transformOrigin: '0 0',
+                  transition: isPanning ? 'none' : 'transform 0.08s ease-out',
+                }}
+                className="relative flex items-start gap-12 pt-4 pl-2 min-w-[780px]"
+              >
+                {/* Dynamic SVG Neural Lines for Mind Map Connections */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible">
+                  <defs>
+                    <linearGradient id="mindmapPulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#ea384c" stopOpacity="0.8" />
+                      <stop offset="100%" stopColor="#ff4d6d" stopOpacity="0.3" />
+                    </linearGradient>
+                    <linearGradient id="activeMindmapGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#ff1744" stopOpacity="1" />
+                      <stop offset="100%" stopColor="#ea384c" stopOpacity="0.85" />
+                    </linearGradient>
+                  </defs>
+
+                  {/* SVG Bezier Lines from Root to Branch 1 & Branch 2 */}
+                  <g>
+                    {/* Path to Branch 1 */}
+                    <path
+                      d="M 190 120 C 230 120, 240 50, 270 50"
+                      stroke={hoveredLeafId ? 'url(#activeMindmapGrad)' : 'url(#mindmapPulseGrad)'}
+                      strokeWidth="2.5"
+                      fill="none"
+                    />
+                    <circle r="3.5" fill="#ea384c">
+                      <animateMotion
+                        dur={hoveredLeafId ? '1.2s' : '3s'}
+                        repeatCount="indefinite"
+                        path="M 190 120 C 230 120, 240 50, 270 50"
+                      />
+                    </circle>
+
+                    {/* Path to Branch 2 */}
+                    <path
+                      d="M 190 120 C 230 120, 240 370, 270 370"
+                      stroke="url(#mindmapPulseGrad)"
+                      strokeWidth="2.5"
+                      fill="none"
+                    />
+                    <circle r="3" fill="#ea384c">
+                      <animateMotion
+                        dur="3.8s"
+                        repeatCount="indefinite"
+                        path="M 190 120 C 230 120, 240 370, 270 370"
+                      />
+                    </circle>
+                  </g>
+                </svg>
+
                 {/* Level 1: Category Root Node */}
-                <div className="shrink-0 mt-20">
-                  <div className="neuro-flat rounded-2xl p-4 border-2 border-[#ea384c] shadow-lg flex items-center gap-3 w-48">
+                <div className="shrink-0 mt-20 z-10">
+                  <div className="neuro-flat rounded-2xl p-4 border-2 border-[#ea384c] shadow-lg flex items-center gap-3 w-48 hover:scale-102 transition-transform">
                     <div className="w-8 h-8 rounded-xl bg-[#ea384c] text-white flex items-center justify-center font-extrabold text-sm shadow-md">
                       24
                     </div>
@@ -634,7 +872,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                 </div>
 
                 {/* Level 2: Sub-branches (Draggable groups & re-orderable leaves) */}
-                <div className="flex-1 space-y-10">
+                <div className="flex-1 space-y-10 z-10">
                   {mindMapData.children?.map((branch) => {
                     const offset = branchOffsets[branch.id] || { x: 0, y: 0 };
                     const isDraggingBranch = draggingBranchId === branch.id;
@@ -664,10 +902,11 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                           </span>
                         </div>
 
-                        {/* Leaf Node Items (Draggable for re-ordering) */}
+                        {/* Leaf Node Items (Draggable for re-ordering & Neural pulse on hover) */}
                         <div className="ml-6 space-y-2.5 border-l-2 border-red-200/80 pl-4 py-1">
                           {branch.children?.map((leaf, leafIndex) => {
                             const isSelected = selectedLeafId === leaf.id;
+                            const isHovered = hoveredLeafId === leaf.id;
                             const isDragOver =
                               dragOverLeafIndex?.branchId === branch.id &&
                               dragOverLeafIndex?.leafIndex === leafIndex;
@@ -680,24 +919,33 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                                 onDragOver={(e) => handleLeafDragOver(e, branch.id, leafIndex)}
                                 onDrop={() => handleLeafDrop(branch.id, leafIndex)}
                                 onClick={() => handleLeafClick(leaf)}
+                                onMouseEnter={() => setHoveredLeafId(leaf.id)}
+                                onMouseLeave={() => setHoveredLeafId(null)}
                                 className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center justify-between text-xs select-none ${
                                   isSelected
                                     ? 'neuro-flat border-2 border-[#ea384c] shadow-md ring-2 ring-red-100 font-bold'
+                                    : isHovered
+                                    ? 'neuro-flat border border-[#ea384c]/80 shadow-md scale-[1.015]'
                                     : 'neuro-flat-sm border border-white/80 hover:border-red-200 hover:scale-[1.01]'
                                 } ${isDragOver ? 'border-dashed border-2 border-[#ea384c] scale-102 bg-red-50/50' : ''}`}
                               >
                                 <div className="flex items-center gap-2.5 min-w-0 pr-4">
                                   <GripVertical className="w-3.5 h-3.5 text-[#9cb0c4] opacity-40 group-hover:opacity-100 cursor-grab shrink-0" />
-                                  <span
-                                    className={`w-2 h-2 rounded-full shrink-0 ${
-                                      isSelected
-                                        ? 'bg-[#ea384c] shadow-[0_0_8px_#ea384c] animate-pulse'
-                                        : 'bg-[#98a5b6] group-hover:bg-[#ea384c]'
-                                    }`}
-                                  />
+                                  <div className="relative shrink-0 flex items-center justify-center">
+                                    <span
+                                      className={`w-2 h-2 rounded-full ${
+                                        isSelected || isHovered
+                                          ? 'bg-[#ea384c] shadow-[0_0_8px_#ea384c]'
+                                          : 'bg-[#98a5b6] group-hover:bg-[#ea384c]'
+                                      }`}
+                                    />
+                                    {isHovered && (
+                                      <span className="absolute w-4 h-4 rounded-full bg-red-400/40 animate-ping" />
+                                    )}
+                                  </div>
                                   <span
                                     className={`truncate text-xs ${
-                                      isSelected ? 'text-[#191f2c]' : 'text-[#444e60]'
+                                      isSelected || isHovered ? 'text-[#191f2c] font-bold' : 'text-[#444e60]'
                                     }`}
                                   >
                                     {leaf.title}
