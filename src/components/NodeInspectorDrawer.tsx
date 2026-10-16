@@ -14,7 +14,9 @@ import {
   BarChart2, 
   CheckCircle2,
   TrendingUp,
-  FileText
+  FileText,
+  Maximize2,
+  BookOpen
 } from 'lucide-react';
 
 interface NodeInspectorDrawerProps {
@@ -22,6 +24,7 @@ interface NodeInspectorDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onNavigateToCreative?: (work: WorkItem) => void;
+  onOpenImmersiveReader?: (work: WorkItem) => void;
 }
 
 export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
@@ -29,6 +32,7 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
   isOpen,
   onClose,
   onNavigateToCreative,
+  onOpenImmersiveReader,
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<Array<{ sender: 'user' | 'ai'; text: string }>>([
@@ -75,12 +79,24 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
             已发布
           </span>
         </div>
-        <button
-          onClick={onClose}
-          className="w-7 h-7 rounded-full neuro-btn flex items-center justify-center text-[#748296] hover:text-[#1e2229]"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onOpenImmersiveReader && (
+            <button
+              onClick={() => onOpenImmersiveReader(work)}
+              className="px-2.5 py-1 rounded-xl neuro-btn text-[11px] font-bold text-[#ea384c] flex items-center gap-1 hover:bg-red-50 shadow-sm"
+              title="全屏沉浸式阅读详细笔记"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>全屏沉浸</span>
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            className="w-7 h-7 rounded-full neuro-btn flex items-center justify-center text-[#748296] hover:text-[#1e2229]"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Scrollable Content */}
@@ -316,6 +332,16 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
 
       {/* Drawer Bottom Actions */}
       <div className="pt-3 border-t border-gray-200/60 flex items-center gap-2">
+        {onOpenImmersiveReader && (
+          <button
+            onClick={() => onOpenImmersiveReader(work)}
+            className="neuro-btn px-3 py-2 rounded-xl text-xs font-bold text-[#ea384c] flex items-center justify-center gap-1 hover:bg-red-50"
+            title="沉浸全屏阅读详细笔记"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>沉浸阅读</span>
+          </button>
+        )}
         {onNavigateToCreative && (
           <button
             onClick={() => onNavigateToCreative(work)}
@@ -327,7 +353,7 @@ export const NodeInspectorDrawer: React.FC<NodeInspectorDrawerProps> = ({
         )}
         <button
           onClick={onClose}
-          className="px-4 neuro-btn py-2 rounded-xl text-xs font-semibold text-[#667487]"
+          className="px-3.5 neuro-btn py-2 rounded-xl text-xs font-semibold text-[#667487]"
         >
           关闭
         </button>

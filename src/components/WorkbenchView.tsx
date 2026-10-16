@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect, useId } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NeuralSphere } from './NeuralSphere';
 import { NodeInspectorDrawer } from './NodeInspectorDrawer';
+import { ImmersiveReaderModal } from './ImmersiveReaderModal';
 import { SATELLITE_NODES, WORK_ITEMS, MIND_MAP_TREE } from '../data/mockData';
 import { WorkItem, SatelliteNode } from '../types';
 import { 
@@ -24,7 +25,11 @@ import {
   ZoomIn,
   ZoomOut,
   Hand,
-  Compass
+  Compass,
+  Cpu,
+  Boxes,
+  Zap,
+  Tag
 } from 'lucide-react';
 
 interface WorkbenchViewProps {
@@ -43,6 +48,52 @@ const DEFAULT_SATELLITE_OFFSETS: Record<string, { x: number; y: number }> = {
   scheduled: { x: 230, y: 170 },  // 5 待发布 (Bottom Right)
 };
 
+// Knowledge Topics for Force-Directed Clustering
+export interface TopicCluster {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  center: { x: number; y: number };
+  desc: string;
+}
+
+export const TOPIC_CLUSTERS: TopicCluster[] = [
+  { id: 'ai-models', name: 'AI 模型与工作流', icon: '⚡', color: '#ea384c', center: { x: 230, y: 140 }, desc: '大模型推理与自动化落地' },
+  { id: 'architecture', name: '系统架构与 Coding', icon: '⚙️', color: '#0284c7', center: { x: 720, y: 140 }, desc: '软件工程与架构认知' },
+  { id: 'knowledge', name: '卡片盒与知识闭环', icon: '🧠', color: '#10b981', center: { x: 230, y: 460 }, desc: '双向反链与第二大脑' },
+  { id: 'business', name: '超级个体商业飞轮', icon: '🚀', color: '#8b5cf6', center: { x: 720, y: 460 }, desc: '一人公司与复利变现' },
+];
+
+export interface ClusteredNode {
+  id: string;
+  title: string;
+  topicId: string;
+  views: string;
+  date: string;
+  workId?: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
+const INITIAL_CLUSTERED_NODES: ClusteredNode[] = [
+  { id: 'opus-35-node', title: 'Opus 3.5 彻底颠覆了我的创作面板', topicId: 'ai-models', views: '11.6w', date: '10-06', workId: 'opus-35', x: 60, y: 75, vx: 0, vy: 0 },
+  { id: 'ai-prompt-node', title: '提示词工程失效了吗？结构化思考才是唯一护城河', topicId: 'ai-models', views: '3.1w', date: '09-10', x: 60, y: 180, vx: 0, vy: 0 },
+  { id: 'vibe-coding-node', title: '什么是真正的 Vibe Coding？零代码直达上线产品', topicId: 'ai-models', views: '5.2w', date: '08-28', x: 310, y: 125, vx: 0, vy: 0 },
+
+  { id: 'code-dead-node', title: '代码已死？不要被忽悠了！万字深度拆解程序员的未来', topicId: 'architecture', views: '2.4w', date: '10-02', workId: 'code-is-dead', x: 570, y: 80, vx: 0, vy: 0 },
+  { id: 'workflow-2024-node', title: '从存量资料到增量方案：我的年度生产力控制台', topicId: 'architecture', views: '1.9w', date: '09-18', x: 570, y: 185, vx: 0, vy: 0 },
+
+  { id: 'obsidian-cursor-node', title: 'Obsidian + Cursor 全流程：打造个人 AI 第二大脑', topicId: 'knowledge', views: '4.8w', date: '09-24', workId: 'obsidian-cursor', x: 60, y: 395, vx: 0, vy: 0 },
+  { id: 'zettelkasten-node', title: '卡片盒笔记法实践：从输入到输出的闭环系统', topicId: 'knowledge', views: '1.9w', date: '09-15', workId: 'zettelkasten-loop', x: 60, y: 500, vx: 0, vy: 0 },
+  { id: 'reading-method-node', title: '别再做无效阅读了：如何把一本书榨干为核心武器', topicId: 'knowledge', views: '1.4w', date: '08-20', x: 310, y: 445, vx: 0, vy: 0 },
+
+  { id: 'solopreneur-node', title: '独立开发者的超级个人商业飞轮：一人公司实践', topicId: 'business', views: '3.1w', date: '09-02', workId: 'solopreneur-flywheel', x: 570, y: 395, vx: 0, vy: 0 },
+  { id: 'creator-burnout-node', title: '创作者瓶颈与四大核心痛点自救手册', topicId: 'business', views: '2.8w', date: '08-11', x: 570, y: 500, vx: 0, vy: 0 },
+];
+
 export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
   mode,
   onToggleMode,
@@ -55,6 +106,16 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
   const [selectedLeafId, setSelectedLeafId] = useState<string>('opus-35-node');
   const [searchQuery, setSearchQuery] = useState('');
   const [copilotAnswer, setCopilotAnswer] = useState<string | null>(null);
+
+  // Full-screen Immersive Reader state
+  const [isReaderOpen, setIsReaderOpen] = useState<boolean>(false);
+  const [readerWork, setReaderWork] = useState<WorkItem | null>(WORK_ITEMS[0]);
+
+  // Mind map layout mode: 'tree' | 'cluster'
+  const [mindMapLayoutMode, setMindMapLayoutMode] = useState<'tree' | 'cluster'>('tree');
+  const [isSimulating, setIsSimulating] = useState<boolean>(false);
+  const [clusteredNodes, setClusteredNodes] = useState<ClusteredNode[]>(INITIAL_CLUSTERED_NODES);
+  const [selectedTopicFilter, setSelectedTopicFilter] = useState<string>('all');
 
   // Hover states for SVG neural energy pulse animation
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -109,7 +170,107 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
   // Drag refs to track live dragging synchronously without state delay
   const activeOrbitalDragId = useRef<string | null>(null);
   const activeBranchDragId = useRef<string | null>(null);
+  const activeClusterNodeDragId = useRef<string | null>(null);
   const isPanningActiveRef = useRef<boolean>(false);
+
+  // Force-Directed Clustering Physics Simulation Loop
+  const runForceSimulation = () => {
+    setIsSimulating(true);
+    let step = 0;
+    const maxSteps = 40;
+    const kSpring = 0.08;
+    const damping = 0.72;
+
+    const timer = setInterval(() => {
+      step++;
+      setClusteredNodes((currentNodes) => {
+        const updated = currentNodes.map((n) => ({ ...n }));
+
+        for (let i = 0; i < updated.length; i++) {
+          const node = updated[i];
+          const targetCluster = TOPIC_CLUSTERS.find((c) => c.id === node.topicId);
+          if (!targetCluster) continue;
+
+          // Find this node's index and count in its topic cluster
+          const clusterSiblings = updated.filter((n) => n.topicId === node.topicId);
+          const siblingIndex = clusterSiblings.findIndex((n) => n.id === node.id);
+          const count = clusterSiblings.length;
+
+          // Compute slotted equilibrium offset around topic center
+          let targetX = targetCluster.center.x;
+          let targetY = targetCluster.center.y;
+          if (count === 2) {
+            targetY += siblingIndex === 0 ? -48 : 52;
+          } else if (count >= 3) {
+            if (siblingIndex === 0) {
+              targetX -= 105;
+              targetY -= 48;
+            } else if (siblingIndex === 1) {
+              targetX -= 105;
+              targetY += 52;
+            } else {
+              targetX += 110;
+              targetY += 6;
+            }
+          }
+
+          // 1. Spring force towards slotted topic centroid
+          const dxCenter = targetX - node.x;
+          const dyCenter = targetY - node.y;
+          node.vx += dxCenter * kSpring;
+          node.vy += dyCenter * kSpring;
+
+          // 2. Anisotropic repulsion between all nodes
+          for (let j = 0; j < updated.length; j++) {
+            if (i === j) continue;
+            const other = updated[j];
+            const dx = node.x - other.x;
+            const dy = node.y - other.y;
+            const normDx = dx / 235;
+            const normDy = dy / 90;
+            const normDistSq = normDx * normDx + normDy * normDy;
+            if (normDistSq < 1.0 && normDistSq > 0.001) {
+              const repelMag = (1.0 - Math.sqrt(normDistSq)) * 16;
+              const angle = Math.atan2(dy, dx);
+              node.vx += Math.cos(angle) * repelMag * 1.4;
+              node.vy += Math.sin(angle) * repelMag * 1.0;
+            }
+          }
+
+          // 3. Damping and update
+          node.vx *= damping;
+          node.vy *= damping;
+          node.x += node.vx;
+          node.y += node.vy;
+        }
+        return updated;
+      });
+
+      if (step >= maxSteps) {
+        clearInterval(timer);
+        setIsSimulating(false);
+      }
+    }, 16);
+  };
+
+  // Switch to cluster mode triggers force simulation
+  const handleSwitchLayoutMode = (layout: 'tree' | 'cluster') => {
+    setMindMapLayoutMode(layout);
+    if (layout === 'cluster') {
+      runForceSimulation();
+    }
+  };
+
+  // Open Full-screen Immersive Reader
+  const handleOpenReader = (work: WorkItem) => {
+    setReaderWork(work);
+    setIsReaderOpen(true);
+  };
+
+  const handleOpenReaderById = (workId?: string) => {
+    const matched = WORK_ITEMS.find((w) => w.id === workId) || WORK_ITEMS[0];
+    handleOpenReader(matched);
+  };
 
   // Unified drag start handler for orbital satellite nodes
   const handleStartDrag = (e: React.MouseEvent | React.PointerEvent, id: string) => {
@@ -154,7 +315,6 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
 
   // Canvas Pan Handlers
   const handleCanvasPanStart = (e: React.MouseEvent) => {
-    // Only pan if clicking on canvas background or holding space/middle click
     if (e.target !== e.currentTarget && !(e.target as HTMLElement).classList.contains('canvas-pannable-bg')) {
       return;
     }
@@ -179,7 +339,6 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     });
   };
 
-  // Zoom control buttons
   const handleZoomIn = () => {
     setZoomScale((prev) => Math.min(2.0, parseFloat((prev + 0.15).toFixed(2))));
   };
@@ -244,6 +403,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     const handleUp = () => {
       activeOrbitalDragId.current = null;
       activeBranchDragId.current = null;
+      activeClusterNodeDragId.current = null;
       isPanningActiveRef.current = false;
       setDraggingNodeId(null);
       setDraggingBranchId(null);
@@ -302,11 +462,11 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     setDragOverLeafIndex(null);
   };
 
-  // Reset positions to default
   const handleResetLayout = () => {
     setSatellitePositions(DEFAULT_SATELLITE_OFFSETS);
     setBranchOffsets({});
     setMindMapData(MIND_MAP_TREE);
+    setClusteredNodes(INITIAL_CLUSTERED_NODES);
     setZoomScale(1);
     setPanOffset({ x: 0, y: 0 });
   };
@@ -364,10 +524,14 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
       <div className="absolute top-6 right-8 z-20 flex flex-col items-end gap-3">
         {/* Reset Layout Button & Drag Tip Pill */}
         <div className="flex items-center gap-2">
-          <span className="px-3 py-1 rounded-full neuro-flat-sm text-[10px] font-semibold text-[#667588] border border-white/70 flex items-center gap-1.5">
+          <span className="px-3 py-1 rounded-full neuro-flat-sm text-[10px] font-semibold text-[#667588] border border-white/70 flex items-center gap-1.5 shadow-sm">
             <Move className="w-3 h-3 text-[#ea384c]" />
             <span>
-              {mode === 'orbital' ? '悬停节点激活神经脉冲 · 拖拽调整轨道' : '按住空白平移画布 · 滚轮缩放导图'}
+              {mode === 'orbital'
+                ? '悬停节点激活神经脉冲 · 拖拽调整轨道'
+                : mindMapLayoutMode === 'tree'
+                ? '按住空白平移画布 · 滚轮缩放导图'
+                : '基于主题标签自动力导向聚类归拢'}
             </span>
           </span>
 
@@ -505,7 +669,6 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
 
                 return (
                   <g key={`svg-link-${node.id}`} style={{ transform: 'translate(50%, 50%)' }}>
-                    {/* Underlying guide line */}
                     <path
                       id={pathId}
                       d={pathData}
@@ -661,6 +824,23 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1 text-[#a3b0c2] pl-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const workMap: Record<string, string> = {
+                            library: 'opus-35',
+                            arch: 'code-is-dead',
+                            ideas: 'obsidian-cursor',
+                            drafts: 'zettelkasten-loop',
+                            scheduled: 'solopreneur-flywheel',
+                          };
+                          handleOpenReaderById(workMap[node.id] || 'opus-35');
+                        }}
+                        className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white/60 transition-colors"
+                        title={`全屏沉浸阅读深入笔记 (${node.name})`}
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                      </button>
                       <GripVertical className="w-3.5 h-3.5 opacity-50 hover:opacity-100 cursor-grab" />
                       <ChevronRight className="w-4 h-4 hover:text-[#ea384c] transition-colors" />
                     </div>
@@ -672,7 +852,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
         ) : (
           /* ========================================================
              MODE B: MIND MAP & HIERARCHICAL GRAPH (Video 0:12 - 0:16)
-             With Pan & Zoom Canvas, Dynamic SVG Beziers, Energy Pulses!
+             With Pan & Zoom Canvas, Tree Branching & Force-Directed Clustering!
              ======================================================== */
           <div className="relative w-full flex items-start gap-8 min-h-[500px]">
             {/* Left Category Spine + Mini Neural Core (Fixed dock) */}
@@ -722,6 +902,37 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                 })}
               </div>
 
+              {/* Layout Mode Switcher inside Left Dock */}
+              <div className="pt-2 border-t border-gray-200/60 space-y-2">
+                <div className="text-[10px] font-bold text-[#8d9baa] uppercase tracking-wider">
+                  导图呈现形态
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 neuro-inset p-1 rounded-2xl text-xs">
+                  <button
+                    onClick={() => handleSwitchLayoutMode('tree')}
+                    className={`py-1.5 px-2 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                      mindMapLayoutMode === 'tree'
+                        ? 'bg-white shadow-sm text-[#ea384c]'
+                        : 'text-[#627083] hover:text-black'
+                    }`}
+                  >
+                    <GitBranch className="w-3.5 h-3.5" />
+                    <span>树状层级</span>
+                  </button>
+                  <button
+                    onClick={() => handleSwitchLayoutMode('cluster')}
+                    className={`py-1.5 px-2 rounded-xl font-bold transition-all flex items-center justify-center gap-1 ${
+                      mindMapLayoutMode === 'cluster'
+                        ? 'bg-white shadow-sm text-[#ea384c]'
+                        : 'text-[#627083] hover:text-black'
+                    }`}
+                  >
+                    <Boxes className="w-3.5 h-3.5" />
+                    <span>主题聚类</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="pt-2 border-t border-gray-200/60">
                 <button
                   onClick={() => onToggleMode('orbital')}
@@ -738,17 +949,32 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
               ref={mindMapCanvasRef}
               onMouseDown={handleCanvasPanStart}
               onWheel={handleCanvasWheel}
-              className={`flex-1 neuro-inset rounded-3xl p-6 border border-white/60 relative overflow-hidden min-h-[540px] select-none canvas-pannable-bg ${
+              className={`flex-1 neuro-inset rounded-3xl p-6 border border-white/60 relative overflow-hidden min-h-[560px] select-none canvas-pannable-bg ${
                 isPanning ? 'cursor-grabbing' : 'cursor-grab'
               }`}
               style={{
-                backgroundImage: 'radial-gradient(rgba(180, 192, 210, 0.4) 1px, transparent 0)',
+                backgroundImage: 'radial-gradient(rgba(180, 192, 210, 0.45) 1px, transparent 0)',
                 backgroundSize: '24px 24px',
                 backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
               }}
             >
               {/* Floating Canvas Zoom & Pan Control Bar */}
               <div className="absolute bottom-4 right-4 z-30 neuro-flat rounded-full p-1.5 border border-white/90 flex items-center gap-1.5 shadow-lg">
+                {mindMapLayoutMode === 'cluster' && (
+                  <>
+                    <button
+                      onClick={runForceSimulation}
+                      disabled={isSimulating}
+                      className="px-3 py-1 rounded-full neuro-btn-red text-[11px] font-bold flex items-center gap-1 shadow-sm mr-1"
+                      title="触发力导向算法自动归拢"
+                    >
+                      <Zap className={`w-3.5 h-3.5 ${isSimulating ? 'animate-spin' : ''}`} />
+                      <span>{isSimulating ? '力导向运算中...' : '重新力导向归拢'}</span>
+                    </button>
+                    <div className="w-[1px] h-4 bg-gray-300 mx-0.5" />
+                  </>
+                )}
+
                 <button
                   onClick={handleZoomOut}
                   className="w-7 h-7 rounded-full neuro-btn flex items-center justify-center text-[#556377] hover:text-[#ea384c]"
@@ -792,13 +1018,19 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   <span className="font-semibold text-[#444f61]">24 作品库</span>
                   <ChevronRight className="w-3 h-3 text-[#9fb0c4]" />
                   <span className="font-bold text-[#ea384c]">
-                    {selectedWork?.title || 'Opus 3.5 彻底颠覆了我的创作面板'}
+                    {mindMapLayoutMode === 'tree'
+                      ? selectedWork?.title || 'Opus 3.5 彻底颠覆了我的创作面板'
+                      : '主题标签力导向聚类网络'}
                   </span>
                 </div>
 
                 <div className="text-[10px] text-[#8391a3] flex items-center gap-1.5 bg-white/70 backdrop-blur-sm px-3 py-1 rounded-full border border-white/80 shadow-sm pointer-events-auto">
                   <Hand className="w-3 h-3 text-[#ea384c]" />
-                  <span>按住空白平移 · 滚轮缩放 · 悬停节点流转能量</span>
+                  <span>
+                    {mindMapLayoutMode === 'tree'
+                      ? '按住空白平移 · 滚轮缩放 · 悬停节点流转能量'
+                      : '力导向模型自动汇聚同主题知识节点 · 点击放大镜深入阅读'}
+                  </span>
                 </div>
               </div>
 
@@ -809,166 +1041,316 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   transformOrigin: '0 0',
                   transition: isPanning ? 'none' : 'transform 0.08s ease-out',
                 }}
-                className="relative flex items-start gap-12 pt-4 pl-2 min-w-[780px]"
+                className="relative pt-4 pl-2 min-w-[850px] min-h-[520px]"
               >
-                {/* Dynamic SVG Neural Lines for Mind Map Connections */}
-                <svg className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible">
-                  <defs>
-                    <linearGradient id="mindmapPulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#ea384c" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="#ff4d6d" stopOpacity="0.3" />
-                    </linearGradient>
-                    <linearGradient id="activeMindmapGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#ff1744" stopOpacity="1" />
-                      <stop offset="100%" stopColor="#ea384c" stopOpacity="0.85" />
-                    </linearGradient>
-                  </defs>
+                {mindMapLayoutMode === 'tree' ? (
+                  /* ========================================================
+                     LAYOUT 1: HIERARCHICAL TREE BRANCHES (Original View)
+                     ======================================================== */
+                  <div className="flex items-start gap-12">
+                    {/* Dynamic SVG Neural Lines for Mind Map Connections */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible">
+                      <defs>
+                        <linearGradient id="mindmapPulseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#ea384c" stopOpacity="0.8" />
+                          <stop offset="100%" stopColor="#ff4d6d" stopOpacity="0.3" />
+                        </linearGradient>
+                        <linearGradient id="activeMindmapGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#ff1744" stopOpacity="1" />
+                          <stop offset="100%" stopColor="#ea384c" stopOpacity="0.85" />
+                        </linearGradient>
+                      </defs>
 
-                  {/* SVG Bezier Lines from Root to Branch 1 & Branch 2 */}
-                  <g>
-                    {/* Path to Branch 1 */}
-                    <path
-                      d="M 190 120 C 230 120, 240 50, 270 50"
-                      stroke={hoveredLeafId ? 'url(#activeMindmapGrad)' : 'url(#mindmapPulseGrad)'}
-                      strokeWidth="2.5"
-                      fill="none"
-                    />
-                    <circle r="3.5" fill="#ea384c">
-                      <animateMotion
-                        dur={hoveredLeafId ? '1.2s' : '3s'}
-                        repeatCount="indefinite"
-                        path="M 190 120 C 230 120, 240 50, 270 50"
-                      />
-                    </circle>
+                      <g>
+                        <path
+                          d="M 190 120 C 230 120, 240 50, 270 50"
+                          stroke={hoveredLeafId ? 'url(#activeMindmapGrad)' : 'url(#mindmapPulseGrad)'}
+                          strokeWidth="2.5"
+                          fill="none"
+                        />
+                        <circle r="3.5" fill="#ea384c">
+                          <animateMotion
+                            dur={hoveredLeafId ? '1.2s' : '3s'}
+                            repeatCount="indefinite"
+                            path="M 190 120 C 230 120, 240 50, 270 50"
+                          />
+                        </circle>
 
-                    {/* Path to Branch 2 */}
-                    <path
-                      d="M 190 120 C 230 120, 240 370, 270 370"
-                      stroke="url(#mindmapPulseGrad)"
-                      strokeWidth="2.5"
-                      fill="none"
-                    />
-                    <circle r="3" fill="#ea384c">
-                      <animateMotion
-                        dur="3.8s"
-                        repeatCount="indefinite"
-                        path="M 190 120 C 230 120, 240 370, 270 370"
-                      />
-                    </circle>
-                  </g>
-                </svg>
+                        <path
+                          d="M 190 120 C 230 120, 240 370, 270 370"
+                          stroke="url(#mindmapPulseGrad)"
+                          strokeWidth="2.5"
+                          fill="none"
+                        />
+                        <circle r="3" fill="#ea384c">
+                          <animateMotion
+                            dur="3.8s"
+                            repeatCount="indefinite"
+                            path="M 190 120 C 230 120, 240 370, 270 370"
+                          />
+                        </circle>
+                      </g>
+                    </svg>
 
-                {/* Level 1: Category Root Node */}
-                <div className="shrink-0 mt-20 z-10">
-                  <div className="neuro-flat rounded-2xl p-4 border-2 border-[#ea384c] shadow-lg flex items-center gap-3 w-48 hover:scale-102 transition-transform">
-                    <div className="w-8 h-8 rounded-xl bg-[#ea384c] text-white flex items-center justify-center font-extrabold text-sm shadow-md">
-                      24
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-[#1f2633]">作品库</h4>
-                      <p className="text-[10px] text-[#8e9caf]">全部已发布内容</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Level 2: Sub-branches (Draggable groups & re-orderable leaves) */}
-                <div className="flex-1 space-y-10 z-10">
-                  {mindMapData.children?.map((branch) => {
-                    const offset = branchOffsets[branch.id] || { x: 0, y: 0 };
-                    const isDraggingBranch = draggingBranchId === branch.id;
-
-                    return (
-                      <div
-                        key={branch.id}
-                        style={{
-                          transform: `translate(${offset.x}px, ${offset.y}px)`,
-                          transition: isDraggingBranch ? 'none' : 'transform 0.15s ease',
-                        }}
-                        className="relative"
-                      >
-                        {/* Branch Header Pill with drag handle */}
-                        <div
-                          onPointerDown={(e) => handleStartBranchDrag(e, branch.id)}
-                          onMouseDown={(e) => handleStartBranchDrag(e, branch.id)}
-                          className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-2xl neuro-flat border border-white/90 text-xs font-bold text-[#2d3645] mb-3 cursor-grab active:cursor-grabbing select-none shadow-sm ${
-                            isDraggingBranch ? 'ring-2 ring-[#ea384c] shadow-lg' : 'hover:scale-[1.01]'
-                          }`}
-                        >
-                          <GripVertical className="w-3.5 h-3.5 text-[#97a5b7]" />
-                          <span className="w-2 h-2 rounded-full bg-[#ea384c]" />
-                          <span>{branch.title}</span>
-                          <span className="px-2 py-0.5 rounded-full bg-red-100 text-[#ea384c] text-[10px] font-extrabold">
-                            {branch.count}
-                          </span>
+                    {/* Level 1: Category Root Node */}
+                    <div className="shrink-0 mt-20 z-10">
+                      <div className="neuro-flat rounded-2xl p-4 border-2 border-[#ea384c] shadow-lg flex items-center gap-3 w-48 hover:scale-102 transition-transform">
+                        <div className="w-8 h-8 rounded-xl bg-[#ea384c] text-white flex items-center justify-center font-extrabold text-sm shadow-md">
+                          24
                         </div>
-
-                        {/* Leaf Node Items (Draggable for re-ordering & Neural pulse on hover) */}
-                        <div className="ml-6 space-y-2.5 border-l-2 border-red-200/80 pl-4 py-1">
-                          {branch.children?.map((leaf, leafIndex) => {
-                            const isSelected = selectedLeafId === leaf.id;
-                            const isHovered = hoveredLeafId === leaf.id;
-                            const isDragOver =
-                              dragOverLeafIndex?.branchId === branch.id &&
-                              dragOverLeafIndex?.leafIndex === leafIndex;
-
-                            return (
-                              <div
-                                key={leaf.id}
-                                draggable
-                                onDragStart={() => handleLeafDragStart(branch.id, leafIndex)}
-                                onDragOver={(e) => handleLeafDragOver(e, branch.id, leafIndex)}
-                                onDrop={() => handleLeafDrop(branch.id, leafIndex)}
-                                onClick={() => handleLeafClick(leaf)}
-                                onMouseEnter={() => setHoveredLeafId(leaf.id)}
-                                onMouseLeave={() => setHoveredLeafId(null)}
-                                className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center justify-between text-xs select-none ${
-                                  isSelected
-                                    ? 'neuro-flat border-2 border-[#ea384c] shadow-md ring-2 ring-red-100 font-bold'
-                                    : isHovered
-                                    ? 'neuro-flat border border-[#ea384c]/80 shadow-md scale-[1.015]'
-                                    : 'neuro-flat-sm border border-white/80 hover:border-red-200 hover:scale-[1.01]'
-                                } ${isDragOver ? 'border-dashed border-2 border-[#ea384c] scale-102 bg-red-50/50' : ''}`}
-                              >
-                                <div className="flex items-center gap-2.5 min-w-0 pr-4">
-                                  <GripVertical className="w-3.5 h-3.5 text-[#9cb0c4] opacity-40 group-hover:opacity-100 cursor-grab shrink-0" />
-                                  <div className="relative shrink-0 flex items-center justify-center">
-                                    <span
-                                      className={`w-2 h-2 rounded-full ${
-                                        isSelected || isHovered
-                                          ? 'bg-[#ea384c] shadow-[0_0_8px_#ea384c]'
-                                          : 'bg-[#98a5b6] group-hover:bg-[#ea384c]'
-                                      }`}
-                                    />
-                                    {isHovered && (
-                                      <span className="absolute w-4 h-4 rounded-full bg-red-400/40 animate-ping" />
-                                    )}
-                                  </div>
-                                  <span
-                                    className={`truncate text-xs ${
-                                      isSelected || isHovered ? 'text-[#191f2c] font-bold' : 'text-[#444e60]'
-                                    }`}
-                                  >
-                                    {leaf.title}
-                                  </span>
-                                </div>
-
-                                <div className="flex items-center gap-3 shrink-0 text-[11px] text-[#8694a7]">
-                                  {leaf.views && (
-                                    <span className="px-2 py-0.5 rounded-md bg-gray-100 font-medium">
-                                      {leaf.views} 播放
-                                    </span>
-                                  )}
-                                  <span>{leaf.date}</span>
-                                  <ChevronRight className="w-3.5 h-3.5 text-[#98a6b8] group-hover:text-[#ea384c] transition-colors" />
-                                </div>
-                              </div>
-                            );
-                          })}
+                        <div>
+                          <h4 className="text-xs font-bold text-[#1f2633]">作品库</h4>
+                          <p className="text-[10px] text-[#8e9caf]">全部已发布内容</p>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+
+                    {/* Level 2: Sub-branches */}
+                    <div className="flex-1 space-y-10 z-10">
+                      {mindMapData.children?.map((branch) => {
+                        const offset = branchOffsets[branch.id] || { x: 0, y: 0 };
+                        const isDraggingBranch = draggingBranchId === branch.id;
+
+                        return (
+                          <div
+                            key={branch.id}
+                            style={{
+                              transform: `translate(${offset.x}px, ${offset.y}px)`,
+                              transition: isDraggingBranch ? 'none' : 'transform 0.15s ease',
+                            }}
+                            className="relative"
+                          >
+                            {/* Branch Header Pill */}
+                            <div
+                              onPointerDown={(e) => handleStartBranchDrag(e, branch.id)}
+                              onMouseDown={(e) => handleStartBranchDrag(e, branch.id)}
+                              className={`inline-flex items-center gap-2.5 px-4 py-2 rounded-2xl neuro-flat border border-white/90 text-xs font-bold text-[#2d3645] mb-3 cursor-grab active:cursor-grabbing select-none shadow-sm ${
+                                isDraggingBranch ? 'ring-2 ring-[#ea384c] shadow-lg' : 'hover:scale-[1.01]'
+                              }`}
+                            >
+                              <GripVertical className="w-3.5 h-3.5 text-[#97a5b7]" />
+                              <span className="w-2 h-2 rounded-full bg-[#ea384c]" />
+                              <span>{branch.title}</span>
+                              <span className="px-2 py-0.5 rounded-full bg-red-100 text-[#ea384c] text-[10px] font-extrabold">
+                                {branch.count}
+                              </span>
+                            </div>
+
+                            {/* Leaf Node Items */}
+                            <div className="ml-6 space-y-2.5 border-l-2 border-red-200/80 pl-4 py-1">
+                              {branch.children?.map((leaf, leafIndex) => {
+                                const isSelected = selectedLeafId === leaf.id;
+                                const isHovered = hoveredLeafId === leaf.id;
+                                const isDragOver =
+                                  dragOverLeafIndex?.branchId === branch.id &&
+                                  dragOverLeafIndex?.leafIndex === leafIndex;
+
+                                return (
+                                  <div
+                                    key={leaf.id}
+                                    draggable
+                                    onDragStart={() => handleLeafDragStart(branch.id, leafIndex)}
+                                    onDragOver={(e) => handleLeafDragOver(e, branch.id, leafIndex)}
+                                    onDrop={() => handleLeafDrop(branch.id, leafIndex)}
+                                    onClick={() => handleLeafClick(leaf)}
+                                    onMouseEnter={() => setHoveredLeafId(leaf.id)}
+                                    onMouseLeave={() => setHoveredLeafId(null)}
+                                    className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center justify-between text-xs select-none ${
+                                      isSelected
+                                        ? 'neuro-flat border-2 border-[#ea384c] shadow-md ring-2 ring-red-100 font-bold'
+                                        : isHovered
+                                        ? 'neuro-flat border border-[#ea384c]/80 shadow-md scale-[1.015]'
+                                        : 'neuro-flat-sm border border-white/80 hover:border-red-200 hover:scale-[1.01]'
+                                    } ${isDragOver ? 'border-dashed border-2 border-[#ea384c] scale-102 bg-red-50/50' : ''}`}
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0 pr-4">
+                                      <GripVertical className="w-3.5 h-3.5 text-[#9cb0c4] opacity-40 group-hover:opacity-100 cursor-grab shrink-0" />
+                                      <div className="relative shrink-0 flex items-center justify-center">
+                                        <span
+                                          className={`w-2 h-2 rounded-full ${
+                                            isSelected || isHovered
+                                              ? 'bg-[#ea384c] shadow-[0_0_8px_#ea384c]'
+                                              : 'bg-[#98a5b6] group-hover:bg-[#ea384c]'
+                                          }`}
+                                        />
+                                        {isHovered && (
+                                          <span className="absolute w-4 h-4 rounded-full bg-red-400/40 animate-ping" />
+                                        )}
+                                      </div>
+                                      <span
+                                        className={`truncate text-xs ${
+                                          isSelected || isHovered ? 'text-[#191f2c] font-bold' : 'text-[#444e60]'
+                                        }`}
+                                      >
+                                        {leaf.title}
+                                      </span>
+                                    </div>
+
+                                    <div className="flex items-center gap-2 shrink-0 text-[11px] text-[#8694a7]">
+                                      {leaf.views && (
+                                        <span className="px-2 py-0.5 rounded-md bg-gray-100 font-medium">
+                                          {leaf.views} 播放
+                                        </span>
+                                      )}
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenReaderById(leaf.workId);
+                                        }}
+                                        className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white/80"
+                                        title="全屏沉浸阅读深入笔记"
+                                      >
+                                        <BookOpen className="w-3.5 h-3.5" />
+                                      </button>
+                                      <ChevronRight className="w-3.5 h-3.5 text-[#98a6b8] group-hover:text-[#ea384c] transition-colors" />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  /* ========================================================
+                     LAYOUT 2: FORCE-DIRECTED TOPIC CLUSTERING (New Feature)
+                     Nodes gravitate to topic centroids via physics simulation!
+                     ======================================================== */
+                  <div className="relative w-full h-[580px]">
+                    {/* SVG Constellation lines linking nodes within the same topic */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+                      <defs>
+                        <filter id="topicGlow" x="-20%" y="-20%" width="140%" height="140%">
+                          <feGaussianBlur stdDeviation="2" result="blur" />
+                          <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                        </filter>
+                      </defs>
+
+                      {/* Connect nodes of the same topic */}
+                      {TOPIC_CLUSTERS.map((cluster) => {
+                        const nodes = clusteredNodes.filter((n) => n.topicId === cluster.id);
+                        if (nodes.length < 2) return null;
+
+                        return (
+                          <g key={`cluster-links-${cluster.id}`}>
+                            {nodes.map((nodeA, idx) => {
+                              const nodeB = nodes[(idx + 1) % nodes.length];
+                              return (
+                                <line
+                                  key={`line-${nodeA.id}-${nodeB.id}`}
+                                  x1={nodeA.x + 90}
+                                  y1={nodeA.y + 25}
+                                  x2={nodeB.x + 90}
+                                  y2={nodeB.y + 25}
+                                  stroke={cluster.color}
+                                  strokeOpacity="0.3"
+                                  strokeWidth="1.5"
+                                  strokeDasharray="3 3"
+                                />
+                              );
+                            })}
+                          </g>
+                        );
+                      })}
+                    </svg>
+
+                    {/* Topic Bubble Containers (Force Centroids) */}
+                    {TOPIC_CLUSTERS.map((cluster) => {
+                      const count = clusteredNodes.filter((n) => n.topicId === cluster.id).length;
+                      return (
+                        <div
+                          key={cluster.id}
+                          style={{
+                            left: `${cluster.center.x - 190}px`,
+                            top: `${cluster.center.y - 85}px`,
+                            borderColor: `${cluster.color}35`,
+                            backgroundColor: `${cluster.color}08`,
+                          }}
+                          className="absolute w-[490px] h-[265px] rounded-3xl neuro-flat-sm border-2 border-dashed pointer-events-none p-4 flex flex-col justify-between opacity-80"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span
+                              className="px-2.5 py-1 rounded-xl text-xs font-bold text-white flex items-center gap-1 shadow-sm"
+                              style={{ backgroundColor: cluster.color }}
+                            >
+                              <span>{cluster.icon}</span>
+                              <span>{cluster.name}</span>
+                            </span>
+                            <span
+                              className="text-[10px] font-extrabold px-2 py-0.5 rounded-full"
+                              style={{ backgroundColor: `${cluster.color}20`, color: cluster.color }}
+                            >
+                              {count} 篇归拢
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-[#8695a8] text-right font-medium">
+                            {cluster.desc}
+                          </p>
+                        </div>
+                      );
+                    })}
+
+                    {/* Individual Clustered Nodes (Draggable & Clickable) */}
+                    {clusteredNodes.map((node) => {
+                      const cluster = TOPIC_CLUSTERS.find((c) => c.id === node.topicId);
+                      const isHovered = hoveredLeafId === node.id;
+
+                      return (
+                        <div
+                          key={node.id}
+                          onClick={() => handleLeafClick(node)}
+                          onMouseEnter={() => setHoveredLeafId(node.id)}
+                          onMouseLeave={() => setHoveredLeafId(null)}
+                          style={{
+                            transform: `translate(${node.x}px, ${node.y}px)`,
+                            transition: isSimulating ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)',
+                            borderColor: isHovered ? cluster?.color : 'rgba(255,255,255,0.9)',
+                            boxShadow: isHovered ? `0 10px 25px ${cluster?.color}25` : undefined,
+                          }}
+                          className={`absolute top-0 left-0 z-20 cursor-pointer p-3 rounded-2xl neuro-flat border w-[235px] select-none shadow-md ${
+                            isHovered
+                              ? 'scale-105 shadow-xl ring-2 z-30'
+                              : 'hover:scale-[1.02]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-[10px] text-[#8492a5] mb-1">
+                            <span
+                              className="font-bold flex items-center gap-1"
+                              style={{ color: cluster?.color }}
+                            >
+                              <Tag className="w-3 h-3" />
+                              {cluster?.name.split(' ')[0]}
+                            </span>
+                            <span>{node.views}</span>
+                          </div>
+
+                          <h4 className="text-xs font-bold text-[#1f2633] line-clamp-2 leading-snug">
+                            {node.title}
+                          </h4>
+
+                          <div className="flex items-center justify-between pt-2 mt-2 border-t border-gray-200/50 text-[10px] text-[#8a98ab]">
+                            <span>{node.date}</span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenReaderById(node.workId);
+                                }}
+                                className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white text-[#566579]"
+                                title="全屏沉浸阅读"
+                              >
+                                <Maximize2 className="w-3 h-3" />
+                              </button>
+                              <ChevronRight className="w-3.5 h-3.5 text-[#a0adc0]" />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1065,6 +1447,21 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
           if (onSelectWorkForCreative) onSelectWorkForCreative(work);
           onNavigateToTab('creative');
         }}
+        onOpenImmersiveReader={(work) => {
+          handleOpenReader(work);
+        }}
+      />
+
+      {/* Full-screen Immersive Reader Modal */}
+      <ImmersiveReaderModal
+        isOpen={isReaderOpen}
+        work={readerWork}
+        onClose={() => setIsReaderOpen(false)}
+        onSelectAnotherWork={(workId) => {
+          const target = WORK_ITEMS.find((w) => w.id === workId);
+          if (target) setReaderWork(target);
+        }}
+        allWorks={WORK_ITEMS}
       />
     </div>
   );
