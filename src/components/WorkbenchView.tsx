@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { NeuralSphere } from './NeuralSphere';
 import { NodeInspectorDrawer } from './NodeInspectorDrawer';
 import { ImmersiveReaderModal } from './ImmersiveReaderModal';
+import { SnapshotModal, SnapshotConfig } from './SnapshotModal';
+import { RelationLabelModal, RelationLabelData } from './RelationLabelModal';
+import { EvolutionPlaybackBar, MILESTONES } from './EvolutionPlaybackBar';
 import { SATELLITE_NODES, WORK_ITEMS, MIND_MAP_TREE } from '../data/mockData';
 import { WorkItem, SatelliteNode } from '../types';
 import { 
@@ -29,7 +32,15 @@ import {
   Cpu,
   Boxes,
   Zap,
-  Tag
+  Tag,
+  Camera,
+  Clock,
+  Activity,
+  History,
+  Check,
+  Eye,
+  TrendingUp,
+  FileText
 } from 'lucide-react';
 
 interface WorkbenchViewProps {
@@ -132,6 +143,60 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     startPanY: 0,
   });
 
+  // Feature 1: Canvas Snapshot State
+  const [isSnapshotModalOpen, setIsSnapshotModalOpen] = useState<boolean>(false);
+
+  // Feature 2: Connection Relation Labels State
+  const [isRelationModalOpen, setIsRelationModalOpen] = useState<boolean>(false);
+  const [activeRelationTarget, setActiveRelationTarget] = useState<{ id: string; source: string; target: string } | null>(null);
+  const [relationLabels, setRelationLabels] = useState<Record<string, RelationLabelData>>({
+    arch: { label: '核心定义', type: 'define', color: '#0284c7' },
+    library: { label: '衍生沉淀', type: 'derive', color: '#8b5cf6' },
+    ideas: { label: '反哺激发', type: 'flywheel', color: '#10b981' },
+    drafts: { label: '包含演化', type: 'contains', color: '#f59e0b' },
+    scheduled: { label: '分发排期', type: 'flywheel', color: '#ea384c' },
+    'branch-video': { label: '包含架构', type: 'contains', color: '#f59e0b' },
+    'branch-article': { label: '衍生洞察', type: 'derive', color: '#8b5cf6' },
+  });
+
+  // Feature 3: Connection Strengths & Pulse Speed Algorithm State
+  const [connectionStrengths, setConnectionStrengths] = useState<Record<string, number>>({
+    arch: 7,
+    library: 9,
+    ideas: 5,
+    drafts: 4,
+    scheduled: 6,
+    'branch-video': 7,
+    'branch-article': 6,
+    'opus-35-node': 8,
+    'obsidian-cursor-node': 7,
+    'code-dead-node': 6,
+  });
+
+  // Feature 4: Mind Map Heat Overlay State (Dynamic node size & glow based on modification frequency & citation count)
+  const [isHeatOverlayActive, setIsHeatOverlayActive] = useState<boolean>(false);
+
+  // Feature 5: AI Distillation State (Gemini API Core Note Summaries)
+  const [distilledSummaries, setDistilledSummaries] = useState<Record<string, { summary: string; timestamp: number }>>({
+    'opus-35-node': {
+      summary: '自动化多模型协同工作流，将知识摄入至产出周期压缩60%，构筑个人数字杠杆。',
+      timestamp: Date.now() - 100000,
+    },
+    'obsidian-cursor-node': {
+      summary: '双大脑联动架构：原子认知沉淀与智能化代码补全贯通，实现思考自组织。',
+      timestamp: Date.now() - 80000,
+    },
+    library: {
+      summary: '已沉淀24项成熟内容资产，以深度文章与技术视频构筑影响力交付飞轮。',
+      timestamp: Date.now() - 50000,
+    }
+  });
+  const [distillingNodeId, setDistillingNodeId] = useState<string | null>(null);
+
+  // Feature 6: Knowledge Evolution Playback State (Timeline playback of graph growth)
+  const [isEvolutionPlaybackOpen, setIsEvolutionPlaybackOpen] = useState<boolean>(false);
+  const [playbackMilestoneIndex, setPlaybackMilestoneIndex] = useState<number>(MILESTONES.length - 1);
+
   // Orbital Satellite positions state
   const [satellitePositions, setSatellitePositions] = useState<Record<string, { x: number; y: number }>>(
     DEFAULT_SATELLITE_OFFSETS
@@ -166,6 +231,25 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
   // Container refs for measuring center
   const orbitalContainerRef = useRef<HTMLDivElement>(null);
   const mindMapCanvasRef = useRef<HTMLDivElement>(null);
+  const [orbitalCenter, setOrbitalCenter] = useState<{ x: number; y: number }>({ x: 450, y: 260 });
+
+  useEffect(() => {
+    const updateCenter = () => {
+      if (orbitalContainerRef.current) {
+        const rect = orbitalContainerRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          setOrbitalCenter({ x: rect.width / 2, y: rect.height / 2 });
+        }
+      }
+    };
+    updateCenter();
+    window.addEventListener('resize', updateCenter);
+    const t = setTimeout(updateCenter, 100);
+    return () => {
+      window.removeEventListener('resize', updateCenter);
+      clearTimeout(t);
+    };
+  }, [mode]);
 
   // Drag refs to track live dragging synchronously without state delay
   const activeOrbitalDragId = useRef<string | null>(null);
@@ -490,6 +574,146 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
     );
   };
 
+  // Feature 5: AI Distillation Handler (calls server-side Gemini API)
+  const handleDistillNode = async (node: { id: string; title: string; category?: string; tags?: string[] }) => {
+    setDistillingNodeId(node.id);
+    // Automatically boost connection activity when distilled
+    setConnectionStrengths((prev) => ({
+      ...prev,
+      [node.id]: (prev[node.id] || 4) + 2,
+      library: (prev.library || 8) + 1,
+    }));
+
+    try {
+      const matchedWork = WORK_ITEMS.find((w) => w.id === (node as any).workId || w.id === node.id);
+      const content = matchedWork?.summary || node.title;
+
+      const res = await fetch('/api/ai/distill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: node.id,
+          title: node.title,
+          content,
+          category: node.category || matchedWork?.category || '知识核心',
+          tags: matchedWork?.tags || ['认知卡片', '双向反链'],
+        }),
+      });
+
+      const data = await res.json();
+      if (data.summary) {
+        setDistilledSummaries((prev) => ({
+          ...prev,
+          [node.id]: {
+            summary: data.summary,
+            timestamp: Date.now(),
+          },
+        }));
+      }
+    } catch (err) {
+      console.error('Distill call failed', err);
+      // Graceful local fallback
+      setDistilledSummaries((prev) => ({
+        ...prev,
+        [node.id]: {
+          summary: `围绕「${node.title}」：提炼高吞吐量双向认知资产，打通从灵感到复利交付的个人飞轮。`,
+          timestamp: Date.now(),
+        },
+      }));
+    } finally {
+      setDistillingNodeId(null);
+    }
+  };
+
+  // Feature 2: Relation modal open & save
+  const handleOpenRelationModal = (connectionId: string, sourceName: string, targetName: string) => {
+    setActiveRelationTarget({ id: connectionId, source: sourceName, target: targetName });
+    setIsRelationModalOpen(true);
+  };
+
+  const handleSaveRelationLabel = (connectionId: string, data: RelationLabelData) => {
+    setRelationLabels((prev) => ({
+      ...prev,
+      [connectionId]: data,
+    }));
+  };
+
+  const handleRemoveRelationLabel = (connectionId: string) => {
+    setRelationLabels((prev) => {
+      const copy = { ...prev };
+      delete copy[connectionId];
+      return copy;
+    });
+  };
+
+  // Feature 3: Boost connection strength
+  const handleBoostConnectionStrength = (connectionId: string) => {
+    setConnectionStrengths((prev) => ({
+      ...prev,
+      [connectionId]: Math.min(10, (prev[connectionId] || 4) + 1),
+    }));
+  };
+
+  // Feature 4: Calculate node heat score (modification frequency + citations)
+  const getNodeHeat = (nodeId: string, workId?: string) => {
+    const matched = WORK_ITEMS.find((w) => w.id === workId || w.id === nodeId);
+    const backlinks = matched?.backlinksCount || (nodeId.includes('opus') ? 18 : nodeId.includes('obsidian') ? 15 : nodeId.includes('code') ? 12 : 7);
+    const modScore = nodeId.includes('opus') ? 9.5 : nodeId.includes('obsidian') ? 9.0 : nodeId.includes('code') ? 8.0 : 6.0;
+    // Normalized 0 to 1
+    const normalizedHeat = Math.min(1.0, (modScore * 0.35 + (backlinks / 22) * 0.65));
+    return {
+      backlinks,
+      modScore,
+      heatScore: normalizedHeat,
+      isCore: normalizedHeat > 0.65,
+    };
+  };
+
+  // Feature 1: Snapshot config compilation & import
+  const currentSnapshotConfig: SnapshotConfig = {
+    version: '2.4.0',
+    timestamp: new Date().toISOString(),
+    title: 'KUAN NEURAL STUDIO | 创作者数字化大脑快照',
+    mode,
+    mindMapLayoutMode,
+    zoomScale,
+    panOffset,
+    satellitePositions,
+    relationLabels,
+    connectionStrengths,
+    clusteredNodes,
+    distilledSummaries,
+    stats: {
+      totalNodes: SATELLITE_NODES.length + clusteredNodes.length,
+      totalConnections: 505,
+      activeRelations: Object.keys(relationLabels).length,
+    },
+  };
+
+  const handleImportConfig = (config: SnapshotConfig) => {
+    if (config.satellitePositions) {
+      setSatellitePositions(config.satellitePositions);
+    }
+    if (config.relationLabels) {
+      setRelationLabels(config.relationLabels);
+    }
+    if (config.connectionStrengths) {
+      setConnectionStrengths(config.connectionStrengths);
+    }
+    if (config.zoomScale) {
+      setZoomScale(config.zoomScale);
+    }
+    if (config.panOffset) {
+      setPanOffset(config.panOffset);
+    }
+    if (config.mode) {
+      onToggleMode(config.mode);
+    }
+    if (config.distilledSummaries) {
+      setDistilledSummaries(config.distilledSummaries);
+    }
+  };
+
   return (
     <div className="relative w-full min-h-[calc(100vh-65px)] flex flex-col justify-between overflow-hidden px-8 py-6">
       {/* Top Left Title & Stats (Always visible in Workbench) */}
@@ -522,18 +746,56 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
 
       {/* Top Right Floating Filter & Legend & Reset */}
       <div className="absolute top-6 right-8 z-20 flex flex-col items-end gap-3">
-        {/* Reset Layout Button & Drag Tip Pill */}
-        <div className="flex items-center gap-2">
+        {/* Feature Action Buttons: Snapshot, Evolution Playback, Heat Overlay, Reset */}
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <span className="px-3 py-1 rounded-full neuro-flat-sm text-[10px] font-semibold text-[#667588] border border-white/70 flex items-center gap-1.5 shadow-sm">
             <Move className="w-3 h-3 text-[#ea384c]" />
             <span>
               {mode === 'orbital'
-                ? '悬停节点激活神经脉冲 · 拖拽调整轨道'
+                ? '双击连线设置关系标签 · 拖拽调整轨道'
                 : mindMapLayoutMode === 'tree'
                 ? '按住空白平移画布 · 滚轮缩放导图'
-                : '基于主题标签自动力导向聚类归拢'}
+                : '双击连线标关系 · 力导向自动归拢'}
             </span>
           </span>
+
+          {/* Feature 1: Snapshot Button */}
+          <button
+            onClick={() => setIsSnapshotModalOpen(true)}
+            className="neuro-btn px-2.5 py-1 rounded-full text-[11px] font-semibold text-[#48566a] hover:text-[#ea384c] flex items-center gap-1.5 border border-white/70 shadow-sm transition-all hover:scale-105 active:scale-95"
+            title="将当前画布布局、连线状态与缩放截取为高分辨率图片或JSON配置文件"
+          >
+            <Camera className="w-3 h-3 text-[#ea384c]" />
+            <span>生成快照</span>
+          </button>
+
+          {/* Feature 6: Knowledge Evolution Playback Button */}
+          <button
+            onClick={() => setIsEvolutionPlaybackOpen(!isEvolutionPlaybackOpen)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 border border-white/70 shadow-sm transition-all hover:scale-105 active:scale-95 ${
+              isEvolutionPlaybackOpen
+                ? 'bg-gradient-to-r from-[#ea384c] to-[#ff4757] text-white shadow-md'
+                : 'neuro-btn text-[#48566a] hover:text-[#ea384c]'
+            }`}
+            title="通过时间轴展示知识图谱生长过程，按时间顺序动画演示"
+          >
+            <Clock className="w-3 h-3" />
+            <span>脉络回放{isEvolutionPlaybackOpen ? '中' : ''}</span>
+          </button>
+
+          {/* Feature 4: Mind Map Heat Overlay Toggle Button */}
+          <button
+            onClick={() => setIsHeatOverlayActive(!isHeatOverlayActive)}
+            className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 border border-white/70 shadow-sm transition-all hover:scale-105 active:scale-95 ${
+              isHeatOverlayActive
+                ? 'bg-gradient-to-r from-red-500 via-amber-500 to-red-500 text-white shadow-md animate-pulse'
+                : 'neuro-btn text-[#48566a] hover:text-[#ea384c]'
+            }`}
+            title="根据修改频率与引用次数动态调整节点尺寸与发光亮度"
+          >
+            <Flame className="w-3 h-3 text-amber-500" />
+            <span>热力透视{isHeatOverlayActive ? '：开启' : ''}</span>
+          </button>
 
           <button
             onClick={handleResetLayout}
@@ -624,8 +886,42 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
             <div className="absolute w-[440px] h-[440px] rounded-full border border-solid border-[#d5dde9]/80 pointer-events-none" />
             <div className="absolute w-[360px] h-[360px] rounded-full border border-dashed border-[#ea384c]/30 pointer-events-none animate-spin [animation-duration:90s]" />
 
+            {/* Recessed Center Dish / Well */}
+            <div className="relative w-[340px] h-[340px] rounded-full neuro-inset-deep flex items-center justify-center p-3 border border-white/60 z-10 pointer-events-auto">
+              {/* Outer decorative ring arc */}
+              <svg className="absolute inset-0 w-full h-full pointer-events-none -rotate-45">
+                <circle
+                  cx="170"
+                  cy="170"
+                  r="162"
+                  stroke="rgba(234, 56, 76, 0.4)"
+                  strokeWidth="3"
+                  fill="none"
+                  strokeDasharray="90 300"
+                  strokeLinecap="round"
+                />
+              </svg>
+
+              {/* 3D WebGL Neural Core */}
+              <NeuralSphere
+                size={300}
+                pulsingIntensity={hoveredNodeId ? 1.6 : 1.2}
+                onClick={() => onToggleMode('mindmap')}
+                className="z-10"
+              />
+
+              {/* Center Tooltip on Hover */}
+              <div 
+                onClick={() => onToggleMode('mindmap')}
+                className="absolute bottom-6 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md text-[11px] font-semibold text-white/95 border border-white/20 pointer-events-auto cursor-pointer hover:bg-black transition-colors flex items-center gap-1 shadow-lg z-20"
+              >
+                <span>点击展开知识图谱</span>
+                <ChevronRight className="w-3 h-3 text-[#ea384c]" />
+              </div>
+            </div>
+
             {/* Dynamic SVG Connecting Lines with Real Neural Pulse Flows */}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible">
+            <svg className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible">
               <defs>
                 <linearGradient id="orbitLineGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                   <stop offset="0%" stopColor="#ea384c" stopOpacity="0.8" />
@@ -661,29 +957,44 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                 const pos = satellitePositions[node.id] || { x: 0, y: 0 };
                 const isDraggingThis = draggingNodeId === node.id;
                 const isHovered = hoveredNodeId === node.id;
+                const strength = connectionStrengths[node.id] || 4;
+                
+                // Feature 3: Pulse speed variation algorithm based on connection strength
+                // Frequently accessed / strong connections flow much faster! (e.g. 0.8s vs 3.2s)
+                const pulseDuration = Math.max(0.65, 3.2 - strength * 0.28).toFixed(2);
+                const pulseSpeedMultiplier = (3.2 / parseFloat(pulseDuration)).toFixed(1);
                 
                 const midX = pos.x * 0.45;
                 const midY = pos.y * 0.45;
+                // Position relation badge in the clear span between core edge and satellite card
+                const badgeX = pos.x * 0.65;
+                const badgeY = pos.y * 0.65;
                 const pathId = `orbital-path-${node.id}`;
                 const pathData = `M 0 0 Q ${midX} ${midY} ${pos.x} ${pos.y}`;
+                const rel = relationLabels[node.id] || { label: '双向生长', type: 'derive', color: '#ea384c' };
 
                 return (
-                  <g key={`svg-link-${node.id}`} style={{ transform: 'translate(50%, 50%)' }}>
+                  <g key={`svg-link-${node.id}`} transform={`translate(${orbitalCenter.x}, ${orbitalCenter.y})`}>
+                    {/* Connection Line with double-click to add/edit relation label */}
                     <path
                       id={pathId}
                       d={pathData}
                       stroke={isHovered || isDraggingThis ? 'url(#orbitActiveGrad)' : 'url(#orbitLineGrad)'}
-                      strokeWidth={isHovered ? '3.5' : isDraggingThis ? '3' : '2'}
+                      strokeWidth={isHovered ? '4' : isDraggingThis ? '3.5' : `${2 + Math.min(2.5, strength * 0.25)}`}
                       strokeDasharray={isHovered ? 'none' : '4 5'}
                       fill="none"
                       filter={isHovered ? 'url(#glowNeural)' : 'none'}
-                      className="transition-all duration-300"
+                      className="transition-all duration-300 cursor-pointer pointer-events-auto"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
+                      }}
                     />
 
-                    {/* Animated Energy Pulses (Flowing towards satellite node) */}
-                    <circle r={isHovered ? 5.5 : 3.5} fill="url(#pulseSparkGrad)">
+                    {/* Animated Energy Pulses (Flowing towards satellite node with speed based on strength) */}
+                    <circle r={isHovered ? 6 : 3.8 + Math.min(2, strength * 0.2)} fill="url(#pulseSparkGrad)">
                       <animateMotion
-                        dur={isHovered ? '1s' : '3.2s'}
+                        dur={`${pulseDuration}s`}
                         repeatCount="indefinite"
                         path={pathData}
                         keyPoints="0;1"
@@ -691,12 +1002,12 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                       />
                     </circle>
 
-                    {/* Secondary trailing particle on hover */}
-                    {isHovered && (
-                      <circle r="4" fill="#ffffff" opacity="0.9">
+                    {/* High-frequency secondary trailing particle when connection strength is high */}
+                    {(strength >= 6 || isHovered) && (
+                      <circle r="3.5" fill="#ffffff" opacity="0.95">
                         <animateMotion
-                          dur="1s"
-                          begin="0.4s"
+                          dur={`${pulseDuration}s`}
+                          begin={`${(parseFloat(pulseDuration) * 0.4).toFixed(2)}s`}
                           repeatCount="indefinite"
                           path={pathData}
                           keyPoints="0;1"
@@ -706,50 +1017,108 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                     )}
 
                     {/* Energy wave ripple at target point */}
-                    {isHovered && (
-                      <circle cx={pos.x} cy={pos.y} r="8" fill="none" stroke="#ea384c" strokeWidth="1.5">
-                        <animate attributeName="r" values="6;16" dur="1.2s" repeatCount="indefinite" />
-                        <animate attributeName="opacity" values="0.8;0" dur="1.2s" repeatCount="indefinite" />
+                    {(isHovered || strength > 7) && (
+                      <circle cx={pos.x} cy={pos.y} r="8" fill="none" stroke={rel.color || '#ea384c'} strokeWidth="1.5">
+                        <animate attributeName="r" values="6;16" dur={`${pulseDuration}s`} repeatCount="indefinite" />
+                        <animate attributeName="opacity" values="0.8;0" dur={`${pulseDuration}s`} repeatCount="indefinite" />
                       </circle>
                     )}
+
+                    {/* Feature 2: Interactive Relation Label Badge on the connection line */}
+                    <g
+                      transform={`translate(${badgeX}, ${badgeY})`}
+                      className="cursor-pointer select-none group pointer-events-auto"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
+                      }}
+                    >
+                      <rect
+                        data-testid={`relation-badge-rect-${node.id}`}
+                        x="-32"
+                        y="-12"
+                        width="64"
+                        height="24"
+                        rx="12"
+                        fill="#191f2c"
+                        stroke={rel.color || '#ea384c'}
+                        strokeWidth="1.5"
+                        style={{ pointerEvents: 'all' }}
+                        className="group-hover:scale-115 transition-transform filter drop-shadow-md cursor-pointer pointer-events-auto"
+                      />
+                      <text
+                        data-testid={`relation-badge-text-${node.id}`}
+                        x="0"
+                        y="3.5"
+                        textAnchor="middle"
+                        fill="#ffffff"
+                        fontSize="10"
+                        fontWeight="bold"
+                        fontFamily="sans-serif"
+                        style={{ pointerEvents: 'all' }}
+                        className="cursor-pointer pointer-events-auto"
+                      >
+                        {rel.label}
+                      </text>
+                      {/* Live pulse speed dot on badge */}
+                      <circle cx="23" cy="-7" r="3" fill={strength > 6 ? '#22c55e' : '#ea384c'}>
+                        <animate attributeName="opacity" values="0.4;1;0.4" dur="1s" repeatCount="indefinite" />
+                      </circle>
+                    </g>
                   </g>
                 );
               })}
             </svg>
 
-            {/* Recessed Center Dish / Well */}
-            <div className="relative w-[340px] h-[340px] rounded-full neuro-inset-deep flex items-center justify-center p-3 border border-white/60 z-10">
-              {/* Outer decorative ring arc */}
-              <svg className="absolute inset-0 w-full h-full pointer-events-none -rotate-45">
-                <circle
-                  cx="170"
-                  cy="170"
-                  r="162"
-                  stroke="rgba(234, 56, 76, 0.4)"
-                  strokeWidth="3"
-                  fill="none"
-                  strokeDasharray="90 300"
-                  strokeLinecap="round"
-                />
-              </svg>
+            {/* Feature 2: Interactive Floating Relation Badges directly on Connection Lines */}
+            {SATELLITE_NODES.map((node) => {
+              const pos = satellitePositions[node.id] || { x: 0, y: 0 };
+              const strength = connectionStrengths[node.id] || 4;
+              const rel = relationLabels[node.id] || { label: '双向生长', type: 'derive', color: '#ea384c' };
+              const badgeX = pos.x * 0.70;
+              const badgeY = pos.y * 0.70;
 
-              {/* 3D WebGL Neural Core */}
-              <NeuralSphere
-                size={300}
-                pulsingIntensity={hoveredNodeId ? 1.6 : 1.2}
-                onClick={() => onToggleMode('mindmap')}
-                className="z-10"
-              />
-
-              {/* Center Tooltip on Hover */}
-              <div 
-                onClick={() => onToggleMode('mindmap')}
-                className="absolute bottom-6 px-3 py-1 rounded-full bg-black/75 backdrop-blur-md text-[11px] font-semibold text-white/95 border border-white/20 pointer-events-auto cursor-pointer hover:bg-black transition-colors flex items-center gap-1 shadow-lg z-20"
-              >
-                <span>点击展开知识图谱</span>
-                <ChevronRight className="w-3 h-3 text-[#ea384c]" />
-              </div>
-            </div>
+              return (
+                <div
+                  key={`relation-badge-dom-${node.id}`}
+                  data-testid={`relation-badge-dom-${node.id}`}
+                  style={{
+                    left: `${orbitalCenter.x}px`,
+                    top: `${orbitalCenter.y}px`,
+                    transform: `translate(-50%, -50%) translate(${badgeX}px, ${badgeY}px)`,
+                  }}
+                  className="absolute z-40 cursor-pointer select-none transition-transform hover:scale-115 active:scale-95"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
+                  }}
+                  title={`双击编辑关系标签与活跃度：${node.name}（当前流速：${(3.2 / Math.max(0.65, 3.2 - strength * 0.28)).toFixed(1)}x）`}
+                >
+                  <div 
+                    className="px-2.5 py-1 rounded-full text-[10px] font-bold text-white shadow-md flex items-center gap-1.5 border hover:brightness-110 transition-all pointer-events-auto"
+                    style={{
+                      backgroundColor: '#191f2c',
+                      borderColor: rel.color || '#ea384c',
+                      boxShadow: `0 2px 10px ${rel.color ? rel.color + '40' : 'rgba(234,56,76,0.3)'}`
+                    }}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: rel.color || '#ea384c' }} />
+                    <span>{rel.label}</span>
+                    <span className="text-[8px] opacity-75 font-mono">
+                      {(3.2 / Math.max(0.65, 3.2 - strength * 0.28)).toFixed(1)}x
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
 
             {/* Draggable Orbiting Satellite Nodes */}
             {SATELLITE_NODES.map((node) => {
@@ -768,10 +1137,12 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   onMouseEnter={() => setHoveredNodeId(node.id)}
                   onMouseLeave={() => setHoveredNodeId(null)}
                   style={{
-                    transform: `translate(calc(-50% + ${pos.x}px), calc(-50% + ${pos.y}px))`,
+                    left: `${orbitalCenter.x}px`,
+                    top: `${orbitalCenter.y}px`,
+                    transform: `translate(-50%, -50%) translate(${pos.x}px, ${pos.y}px)`,
                     touchAction: 'none',
                   }}
-                  className={`absolute top-1/2 left-1/2 z-30 cursor-grab active:cursor-grabbing select-none transition-transform duration-150 ${
+                  className={`absolute z-30 cursor-grab active:cursor-grabbing select-none transition-transform duration-150 ${
                     isDragging
                       ? 'scale-105 shadow-2xl ring-2 ring-[#ea384c] z-40'
                       : isHovered
@@ -780,70 +1151,98 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   }`}
                 >
                   <div
-                    className={`neuro-flat rounded-2xl p-3.5 border flex items-center gap-3 ${
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
+                    }}
+                    className={`neuro-flat rounded-2xl p-3 border flex flex-col gap-2 max-w-[280px] ${
                       isLibrary || isHovered
-                        ? 'border-red-300/90 ring-1 ring-[#ea384c]/30'
-                        : 'border-white/90'
+                        ? 'border-red-300/90 ring-1 ring-[#ea384c]/30 shadow-lg'
+                        : 'border-white/90 shadow-sm'
                     }`}
                   >
-                    <div className="w-9 h-9 rounded-xl bg-[#1d2330] flex items-center justify-center relative overflow-hidden shadow-inner shrink-0">
-                      <div
-                        className={`w-3.5 h-3.5 rounded-full ${
-                          node.id === 'library'
-                            ? 'bg-gradient-to-tr from-[#ea384c] to-[#ff4d6d] shadow-[0_0_8px_#ea384c]'
-                            : node.id === 'arch'
-                            ? 'bg-gradient-to-tr from-[#ea384c] to-[#ff758f] animate-pulse'
-                            : node.id === 'drafts'
-                            ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]'
-                            : node.id === 'scheduled'
-                            ? 'bg-indigo-500'
-                            : 'bg-amber-400'
-                        }`}
-                      />
-                      {isHovered && (
-                        <div className="absolute inset-0 bg-red-500/20 animate-ping rounded-full" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className={`text-sm font-extrabold ${
-                            isLibrary || isHovered ? 'text-[#ea384c]' : 'text-[#191f2c]'
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-[#1d2330] flex items-center justify-center relative overflow-hidden shadow-inner shrink-0">
+                        <div
+                          className={`w-3.5 h-3.5 rounded-full ${
+                            node.id === 'library'
+                              ? 'bg-gradient-to-tr from-[#ea384c] to-[#ff4d6d] shadow-[0_0_8px_#ea384c]'
+                              : node.id === 'arch'
+                              ? 'bg-gradient-to-tr from-[#ea384c] to-[#ff758f] animate-pulse'
+                              : node.id === 'drafts'
+                              ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]'
+                              : node.id === 'scheduled'
+                              ? 'bg-indigo-500'
+                              : 'bg-amber-400'
                           }`}
-                        >
-                          {node.count}
-                        </span>
-                        <span className="text-xs font-bold text-[#4c576a]">{node.name}</span>
-                        {isLibrary && (
-                          <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-red-100 text-[#ea384c] font-bold">
-                            活跃
-                          </span>
+                        />
+                        {isHovered && (
+                          <div className="absolute inset-0 bg-red-500/20 animate-ping rounded-full" />
                         )}
                       </div>
-                      <p className="text-[10px] text-[#8e9caf] whitespace-nowrap">{node.desc}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span
+                            className={`text-sm font-extrabold ${
+                              isLibrary || isHovered ? 'text-[#ea384c]' : 'text-[#191f2c]'
+                            }`}
+                          >
+                            {node.count}
+                          </span>
+                          <span className="text-xs font-bold text-[#4c576a]">{node.name}</span>
+                          <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-red-50 text-[#ea384c] font-bold border border-red-200/50">
+                            {(3.2 / Math.max(0.65, 3.2 - (connectionStrengths[node.id] || 4) * 0.28)).toFixed(1)}x 流速
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-[#8e9caf] truncate">{node.desc}</p>
+                      </div>
+
+                      <div className="flex items-center gap-1 text-[#a3b0c2] pl-1 shrink-0">
+                        {/* Feature 5: AI Distillation Button */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDistillNode({ id: node.id, title: node.name, category: '星系骨干' });
+                          }}
+                          disabled={distillingNodeId === node.id}
+                          className="p-1 rounded-lg text-[#ea384c] hover:bg-red-50 transition-colors"
+                          title="调用 Gemini API 智能提炼核心认知摘要"
+                        >
+                          <Sparkles className={`w-3.5 h-3.5 ${distillingNodeId === node.id ? 'animate-spin' : ''}`} />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const workMap: Record<string, string> = {
+                              library: 'opus-35',
+                              arch: 'code-is-dead',
+                              ideas: 'obsidian-cursor',
+                              drafts: 'zettelkasten-loop',
+                              scheduled: 'solopreneur-flywheel',
+                            };
+                            handleOpenReaderById(workMap[node.id] || 'opus-35');
+                          }}
+                          className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white/60 transition-colors"
+                          title={`全屏沉浸阅读深入笔记 (${node.name})`}
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                        </button>
+                        <GripVertical className="w-3.5 h-3.5 opacity-50 hover:opacity-100 cursor-grab" />
+                        <ChevronRight className="w-4 h-4 hover:text-[#ea384c] transition-colors" />
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-1 text-[#a3b0c2] pl-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const workMap: Record<string, string> = {
-                            library: 'opus-35',
-                            arch: 'code-is-dead',
-                            ideas: 'obsidian-cursor',
-                            drafts: 'zettelkasten-loop',
-                            scheduled: 'solopreneur-flywheel',
-                          };
-                          handleOpenReaderById(workMap[node.id] || 'opus-35');
-                        }}
-                        className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white/60 transition-colors"
-                        title={`全屏沉浸阅读深入笔记 (${node.name})`}
-                      >
-                        <BookOpen className="w-3.5 h-3.5" />
-                      </button>
-                      <GripVertical className="w-3.5 h-3.5 opacity-50 hover:opacity-100 cursor-grab" />
-                      <ChevronRight className="w-4 h-4 hover:text-[#ea384c] transition-colors" />
-                    </div>
+                    {/* Feature 5: Render Distilled Summary if available */}
+                    {distilledSummaries[node.id] && (
+                      <div className="pt-1.5 mt-0.5 border-t border-gray-200/60 text-[10px] text-[#2c3546] bg-red-50/50 p-2 rounded-xl border border-red-100 flex items-start gap-1.5">
+                        <Sparkles className="w-3 h-3 text-[#ea384c] shrink-0 mt-0.5" />
+                        <div className="leading-snug">
+                          <span className="font-extrabold text-[#ea384c] mr-1">AI 提炼:</span>
+                          <span>{distilledSummaries[node.id].summary}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -1061,39 +1460,137 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                         </linearGradient>
                       </defs>
 
-                      <g>
-                        <path
-                          d="M 190 120 C 230 120, 240 50, 270 50"
-                          stroke={hoveredLeafId ? 'url(#activeMindmapGrad)' : 'url(#mindmapPulseGrad)'}
-                          strokeWidth="2.5"
-                          fill="none"
-                        />
-                        <circle r="3.5" fill="#ea384c">
-                          <animateMotion
-                            dur={hoveredLeafId ? '1.2s' : '3s'}
-                            repeatCount="indefinite"
-                            path="M 190 120 C 230 120, 240 50, 270 50"
-                          />
-                        </circle>
+                      {(() => {
+                        const strVideo = connectionStrengths['branch-video'] || 7;
+                        const durVideo = Math.max(0.65, 3.2 - strVideo * 0.28).toFixed(2);
+                        const relVideo = relationLabels['branch-video'] || { label: '包含架构', type: 'contains', color: '#f59e0b' };
 
-                        <path
-                          d="M 190 120 C 230 120, 240 370, 270 370"
-                          stroke="url(#mindmapPulseGrad)"
-                          strokeWidth="2.5"
-                          fill="none"
-                        />
-                        <circle r="3" fill="#ea384c">
-                          <animateMotion
-                            dur="3.8s"
-                            repeatCount="indefinite"
-                            path="M 190 120 C 230 120, 240 370, 270 370"
-                          />
-                        </circle>
-                      </g>
+                        const strArticle = connectionStrengths['branch-article'] || 6;
+                        const durArticle = Math.max(0.65, 3.2 - strArticle * 0.28).toFixed(2);
+                        const relArticle = relationLabels['branch-article'] || { label: '衍生洞察', type: 'derive', color: '#8b5cf6' };
+
+                        return (
+                          <g>
+                            {/* Branch 1: Video Works */}
+                            <path
+                              d="M 190 120 C 230 120, 240 50, 270 50"
+                              stroke={hoveredLeafId ? 'url(#activeMindmapGrad)' : relVideo.color || 'url(#mindmapPulseGrad)'}
+                              strokeWidth={hoveredLeafId ? '3.5' : `${2 + Math.min(2, strVideo * 0.2)}`}
+                              strokeDasharray={hoveredLeafId ? 'none' : '4 4'}
+                              fill="none"
+                              className="cursor-pointer pointer-events-auto"
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelationModal('branch-video', '作品库', '视频 / 深度教程');
+                              }}
+                            />
+                            <circle r={3.5 + Math.min(2, strVideo * 0.2)} fill="#ea384c">
+                              <animateMotion
+                                dur={`${durVideo}s`}
+                                repeatCount="indefinite"
+                                path="M 190 120 C 230 120, 240 50, 270 50"
+                              />
+                            </circle>
+                            {/* Relation badge on Branch 1 */}
+                            <g
+                              transform="translate(225, 78)"
+                              className="cursor-pointer select-none group pointer-events-auto"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelationModal('branch-video', '作品库', '视频 / 深度教程');
+                              }}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelationModal('branch-video', '作品库', '视频 / 深度教程');
+                              }}
+                            >
+                              <rect
+                                x="-24"
+                                y="-10"
+                                width="48"
+                                height="20"
+                                rx="10"
+                                fill="#191f2c"
+                                stroke={relVideo.color || '#f59e0b'}
+                                strokeWidth="1.2"
+                                className="group-hover:scale-110 transition-transform filter drop-shadow-sm"
+                              />
+                              <text
+                                x="0"
+                                y="3"
+                                textAnchor="middle"
+                                fill="#ffffff"
+                                fontSize="9"
+                                fontWeight="bold"
+                                fontFamily="sans-serif"
+                              >
+                                {relVideo.label}
+                              </text>
+                            </g>
+
+                            {/* Branch 2: Article Works */}
+                            <path
+                              d="M 190 120 C 230 120, 240 370, 270 370"
+                              stroke={relArticle.color || 'url(#mindmapPulseGrad)'}
+                              strokeWidth={`${2 + Math.min(2, strArticle * 0.2)}`}
+                              strokeDasharray="4 4"
+                              fill="none"
+                              className="cursor-pointer pointer-events-auto"
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelationModal('branch-article', '作品库', '图文 / 复盘思考');
+                              }}
+                            />
+                            <circle r={3 + Math.min(2, strArticle * 0.2)} fill="#ea384c">
+                              <animateMotion
+                                dur={`${durArticle}s`}
+                                repeatCount="indefinite"
+                                path="M 190 120 C 230 120, 240 370, 270 370"
+                              />
+                            </circle>
+                            {/* Relation badge on Branch 2 */}
+                            <g
+                              transform="translate(225, 255)"
+                              className="cursor-pointer select-none group pointer-events-auto"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelationModal('branch-article', '作品库', '图文 / 复盘思考');
+                              }}
+                              onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenRelationModal('branch-article', '作品库', '图文 / 复盘思考');
+                              }}
+                            >
+                              <rect
+                                x="-24"
+                                y="-10"
+                                width="48"
+                                height="20"
+                                rx="10"
+                                fill="#191f2c"
+                                stroke={relArticle.color || '#8b5cf6'}
+                                strokeWidth="1.2"
+                                className="group-hover:scale-110 transition-transform filter drop-shadow-sm"
+                              />
+                              <text
+                                x="0"
+                                y="3"
+                                textAnchor="middle"
+                                fill="#ffffff"
+                                fontSize="9"
+                                fontWeight="bold"
+                                fontFamily="sans-serif"
+                              >
+                                {relArticle.label}
+                              </text>
+                            </g>
+                          </g>
+                        );
+                      })()}
                     </svg>
 
                     {/* Level 1: Category Root Node */}
-                    <div className="shrink-0 mt-20 z-10">
+                    <div className="shrink-0 mt-20 z-10 relative">
                       <div className="neuro-flat rounded-2xl p-4 border-2 border-[#ea384c] shadow-lg flex items-center gap-3 w-48 hover:scale-102 transition-transform">
                         <div className="w-8 h-8 rounded-xl bg-[#ea384c] text-white flex items-center justify-center font-extrabold text-sm shadow-md">
                           24
@@ -1102,6 +1599,43 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                           <h4 className="text-xs font-bold text-[#1f2633]">作品库</h4>
                           <p className="text-[10px] text-[#8e9caf]">全部已发布内容</p>
                         </div>
+                      </div>
+
+                      {/* Floating Relation Badges for Branches */}
+                      <div
+                        onClick={() => handleOpenRelationModal('branch-video', '作品库', '视频 / 深度教程')}
+                        onDoubleClick={() => handleOpenRelationModal('branch-video', '作品库', '视频 / 深度教程')}
+                        className="absolute -right-7 -top-10 z-30 cursor-pointer select-none transition-transform hover:scale-110"
+                        title="双击自定义关系标签（视频 / 深度教程）"
+                      >
+                        <span 
+                          className="px-2 py-0.5 rounded-full text-[9px] font-bold text-white shadow-sm border flex items-center gap-1"
+                          style={{
+                            backgroundColor: '#191f2c',
+                            borderColor: relationLabels['branch-video']?.color || '#f59e0b',
+                          }}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: relationLabels['branch-video']?.color || '#f59e0b' }} />
+                          {relationLabels['branch-video']?.label || '包含架构'}
+                        </span>
+                      </div>
+
+                      <div
+                        onClick={() => handleOpenRelationModal('branch-article', '作品库', '图文 / 复盘思考')}
+                        onDoubleClick={() => handleOpenRelationModal('branch-article', '作品库', '图文 / 复盘思考')}
+                        className="absolute -right-7 top-32 z-30 cursor-pointer select-none transition-transform hover:scale-110"
+                        title="双击自定义关系标签（图文 / 复盘思考）"
+                      >
+                        <span 
+                          className="px-2 py-0.5 rounded-full text-[9px] font-bold text-white shadow-sm border flex items-center gap-1"
+                          style={{
+                            backgroundColor: '#191f2c',
+                            borderColor: relationLabels['branch-article']?.color || '#8b5cf6',
+                          }}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: relationLabels['branch-article']?.color || '#8b5cf6' }} />
+                          {relationLabels['branch-article']?.label || '衍生洞察'}
+                        </span>
                       </div>
                     </div>
 
@@ -1138,75 +1672,137 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
 
                             {/* Leaf Node Items */}
                             <div className="ml-6 space-y-2.5 border-l-2 border-red-200/80 pl-4 py-1">
-                              {branch.children?.map((leaf, leafIndex) => {
-                                const isSelected = selectedLeafId === leaf.id;
-                                const isHovered = hoveredLeafId === leaf.id;
-                                const isDragOver =
-                                  dragOverLeafIndex?.branchId === branch.id &&
-                                  dragOverLeafIndex?.leafIndex === leafIndex;
+                                {branch.children?.map((leaf, leafIndex) => {
+                                  const isSelected = selectedLeafId === leaf.id;
+                                  const isHovered = hoveredLeafId === leaf.id;
+                                  const isDragOver =
+                                    dragOverLeafIndex?.branchId === branch.id &&
+                                    dragOverLeafIndex?.leafIndex === leafIndex;
 
-                                return (
-                                  <div
-                                    key={leaf.id}
-                                    draggable
-                                    onDragStart={() => handleLeafDragStart(branch.id, leafIndex)}
-                                    onDragOver={(e) => handleLeafDragOver(e, branch.id, leafIndex)}
-                                    onDrop={() => handleLeafDrop(branch.id, leafIndex)}
-                                    onClick={() => handleLeafClick(leaf)}
-                                    onMouseEnter={() => setHoveredLeafId(leaf.id)}
-                                    onMouseLeave={() => setHoveredLeafId(null)}
-                                    className={`group p-3 rounded-2xl cursor-pointer transition-all flex items-center justify-between text-xs select-none ${
-                                      isSelected
-                                        ? 'neuro-flat border-2 border-[#ea384c] shadow-md ring-2 ring-red-100 font-bold'
-                                        : isHovered
-                                        ? 'neuro-flat border border-[#ea384c]/80 shadow-md scale-[1.015]'
-                                        : 'neuro-flat-sm border border-white/80 hover:border-red-200 hover:scale-[1.01]'
-                                    } ${isDragOver ? 'border-dashed border-2 border-[#ea384c] scale-102 bg-red-50/50' : ''}`}
-                                  >
-                                    <div className="flex items-center gap-2.5 min-w-0 pr-4">
-                                      <GripVertical className="w-3.5 h-3.5 text-[#9cb0c4] opacity-40 group-hover:opacity-100 cursor-grab shrink-0" />
-                                      <div className="relative shrink-0 flex items-center justify-center">
-                                        <span
-                                          className={`w-2 h-2 rounded-full ${
-                                            isSelected || isHovered
-                                              ? 'bg-[#ea384c] shadow-[0_0_8px_#ea384c]'
-                                              : 'bg-[#98a5b6] group-hover:bg-[#ea384c]'
-                                          }`}
-                                        />
-                                        {isHovered && (
-                                          <span className="absolute w-4 h-4 rounded-full bg-red-400/40 animate-ping" />
-                                        )}
+                                  // Feature 4: Calculate node heat score (modification frequency + citations)
+                                  const heat = getNodeHeat(leaf.id, leaf.workId);
+
+                                  // Feature 6: Evolution milestone check
+                                  const currentMilestone = MILESTONES[playbackMilestoneIndex];
+                                  const isMilestoneFocused = isEvolutionPlaybackOpen && currentMilestone?.nodeId === leaf.id;
+
+                                  return (
+                                    <div
+                                      key={leaf.id}
+                                      draggable
+                                      onDragStart={() => handleLeafDragStart(branch.id, leafIndex)}
+                                      onDragOver={(e) => handleLeafDragOver(e, branch.id, leafIndex)}
+                                      onDrop={() => handleLeafDrop(branch.id, leafIndex)}
+                                      onClick={() => handleLeafClick(leaf)}
+                                      onMouseEnter={() => setHoveredLeafId(leaf.id)}
+                                      onMouseLeave={() => setHoveredLeafId(null)}
+                                      style={{
+                                        transform: isHeatOverlayActive
+                                          ? `scale(${1 + heat.heatScore * 0.08})`
+                                          : undefined,
+                                        boxShadow: isHeatOverlayActive
+                                          ? `0 0 ${10 + heat.heatScore * 18}px ${
+                                              heat.isCore
+                                                ? 'rgba(234, 56, 76, 0.6)'
+                                                : 'rgba(245, 158, 11, 0.45)'
+                                            }`
+                                          : undefined,
+                                        borderColor: isHeatOverlayActive && heat.isCore ? '#ea384c' : undefined,
+                                      }}
+                                      className={`group p-3 rounded-2xl cursor-pointer transition-all flex flex-col gap-1.5 text-xs select-none ${
+                                        isMilestoneFocused
+                                          ? 'ring-4 ring-[#ea384c] scale-105 shadow-2xl bg-red-50/70 z-30'
+                                          : isSelected
+                                          ? 'neuro-flat border-2 border-[#ea384c] shadow-md ring-2 ring-red-100 font-bold'
+                                          : isHovered
+                                          ? 'neuro-flat border border-[#ea384c]/80 shadow-md scale-[1.015]'
+                                          : 'neuro-flat-sm border border-white/80 hover:border-red-200 hover:scale-[1.01]'
+                                      } ${isDragOver ? 'border-dashed border-2 border-[#ea384c] scale-102 bg-red-50/50' : ''}`}
+                                    >
+                                      <div className="flex items-center justify-between w-full">
+                                        <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                                          <GripVertical className="w-3.5 h-3.5 text-[#9cb0c4] opacity-40 group-hover:opacity-100 cursor-grab shrink-0" />
+                                          <div className="relative shrink-0 flex items-center justify-center">
+                                            <span
+                                              className={`w-2 h-2 rounded-full ${
+                                                isSelected || isHovered
+                                                  ? 'bg-[#ea384c] shadow-[0_0_8px_#ea384c]'
+                                                  : 'bg-[#98a5b6] group-hover:bg-[#ea384c]'
+                                              }`}
+                                            />
+                                            {isHovered && (
+                                              <span className="absolute w-4 h-4 rounded-full bg-red-400/40 animate-ping" />
+                                            )}
+                                          </div>
+                                          <span
+                                            className={`truncate text-xs ${
+                                              isSelected || isHovered ? 'text-[#191f2c] font-bold' : 'text-[#444e60]'
+                                            }`}
+                                          >
+                                            {leaf.title}
+                                          </span>
+                                        </div>
+
+                                        <div className="flex items-center gap-1.5 shrink-0 text-[11px] text-[#8694a7]">
+                                          {/* Feature 4: Heat Overlay Badge */}
+                                          {isHeatOverlayActive && (
+                                            <span 
+                                              className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold text-white flex items-center gap-0.5 shadow-xs ${
+                                                heat.isCore
+                                                  ? 'bg-gradient-to-r from-red-500 to-amber-500 animate-pulse'
+                                                  : 'bg-blue-500'
+                                              }`}
+                                            >
+                                              <Flame className="w-2.5 h-2.5" />
+                                              <span>{heat.isCore ? '核心枢纽' : '常态'} (反链{heat.backlinks})</span>
+                                            </span>
+                                          )}
+
+                                          {/* Feature 5: AI Distillation Trigger Button */}
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDistillNode(leaf);
+                                            }}
+                                            disabled={distillingNodeId === leaf.id}
+                                            className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-red-50 text-[#637286] transition-colors"
+                                            title="调用 Gemini API 智能提炼本笔记核心摘要"
+                                          >
+                                            <Sparkles className={`w-3.5 h-3.5 text-[#ea384c] ${distillingNodeId === leaf.id ? 'animate-spin' : ''}`} />
+                                          </button>
+
+                                          {leaf.views && (
+                                            <span className="px-2 py-0.5 rounded-md bg-gray-100 font-medium text-[10px]">
+                                              {leaf.views}
+                                            </span>
+                                          )}
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenReaderById(leaf.workId);
+                                            }}
+                                            className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white/80"
+                                            title="全屏沉浸阅读深入笔记"
+                                          >
+                                            <BookOpen className="w-3.5 h-3.5" />
+                                          </button>
+                                          <ChevronRight className="w-3.5 h-3.5 text-[#98a6b8] group-hover:text-[#ea384c] transition-colors" />
+                                        </div>
                                       </div>
-                                      <span
-                                        className={`truncate text-xs ${
-                                          isSelected || isHovered ? 'text-[#191f2c] font-bold' : 'text-[#444e60]'
-                                        }`}
-                                      >
-                                        {leaf.title}
-                                      </span>
-                                    </div>
 
-                                    <div className="flex items-center gap-2 shrink-0 text-[11px] text-[#8694a7]">
-                                      {leaf.views && (
-                                        <span className="px-2 py-0.5 rounded-md bg-gray-100 font-medium">
-                                          {leaf.views} 播放
-                                        </span>
+                                      {/* Feature 5: Display Distilled Summary on Leaf Card */}
+                                      {distilledSummaries[leaf.id] && (
+                                        <div className="mt-1 p-2 rounded-xl bg-gradient-to-r from-red-50 to-amber-50/70 border border-red-200/60 text-[10px] text-[#2c3645] flex items-start gap-1.5 shadow-xs">
+                                          <Sparkles className="w-3.5 h-3.5 text-[#ea384c] shrink-0 mt-0.5" />
+                                          <div className="leading-snug">
+                                            <span className="font-extrabold text-[#ea384c] mr-1">Gemini 核心提炼:</span>
+                                            <span>{distilledSummaries[leaf.id].summary}</span>
+                                          </div>
+                                        </div>
                                       )}
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleOpenReaderById(leaf.workId);
-                                        }}
-                                        className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white/80"
-                                        title="全屏沉浸阅读深入笔记"
-                                      >
-                                        <BookOpen className="w-3.5 h-3.5" />
-                                      </button>
-                                      <ChevronRight className="w-3.5 h-3.5 text-[#98a6b8] group-hover:text-[#ea384c] transition-colors" />
                                     </div>
-                                  </div>
-                                );
-                              })}
+                                  );
+                                })}
                             </div>
                           </div>
                         );
@@ -1296,6 +1892,11 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                     {clusteredNodes.map((node) => {
                       const cluster = TOPIC_CLUSTERS.find((c) => c.id === node.topicId);
                       const isHovered = hoveredLeafId === node.id;
+                      const heat = getNodeHeat(node.id, node.workId);
+
+                      // Feature 6: Evolution milestone check
+                      const currentMilestone = MILESTONES[playbackMilestoneIndex];
+                      const isMilestoneFocused = isEvolutionPlaybackOpen && currentMilestone?.nodeId === node.id;
 
                       return (
                         <div
@@ -1304,13 +1905,31 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                           onMouseEnter={() => setHoveredLeafId(node.id)}
                           onMouseLeave={() => setHoveredLeafId(null)}
                           style={{
-                            transform: `translate(${node.x}px, ${node.y}px)`,
+                            transform: `translate(${node.x}px, ${node.y}px)${
+                              isHeatOverlayActive ? ` scale(${1 + heat.heatScore * 0.08})` : ''
+                            }`,
                             transition: isSimulating ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)',
-                            borderColor: isHovered ? cluster?.color : 'rgba(255,255,255,0.9)',
-                            boxShadow: isHovered ? `0 10px 25px ${cluster?.color}25` : undefined,
+                            borderColor: isMilestoneFocused
+                              ? '#ea384c'
+                              : isHeatOverlayActive && heat.isCore
+                              ? '#ea384c'
+                              : isHovered
+                              ? cluster?.color
+                              : 'rgba(255,255,255,0.9)',
+                            boxShadow: isMilestoneFocused
+                              ? '0 0 25px rgba(234, 56, 76, 0.65)'
+                              : isHeatOverlayActive
+                              ? `0 0 ${12 + heat.heatScore * 18}px ${
+                                  heat.isCore ? 'rgba(234, 56, 76, 0.6)' : 'rgba(245, 158, 11, 0.4)'
+                                }`
+                              : isHovered
+                              ? `0 10px 25px ${cluster?.color}25`
+                              : undefined,
                           }}
                           className={`absolute top-0 left-0 z-20 cursor-pointer p-3 rounded-2xl neuro-flat border w-[235px] select-none shadow-md ${
-                            isHovered
+                            isMilestoneFocused
+                              ? 'ring-4 ring-[#ea384c] scale-105 shadow-2xl z-40 bg-red-50/60'
+                              : isHovered
                               ? 'scale-105 shadow-xl ring-2 z-30'
                               : 'hover:scale-[1.02]'
                           }`}
@@ -1323,7 +1942,15 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                               <Tag className="w-3 h-3" />
                               {cluster?.name.split(' ')[0]}
                             </span>
-                            <span>{node.views}</span>
+                            <div className="flex items-center gap-1">
+                              {isHeatOverlayActive && (
+                                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold text-white bg-gradient-to-r from-red-500 to-amber-500 flex items-center gap-0.5">
+                                  <Flame className="w-2.5 h-2.5" />
+                                  <span>{heat.backlinks}反链</span>
+                                </span>
+                              )}
+                              <span>{node.views}</span>
+                            </div>
                           </div>
 
                           <h4 className="text-xs font-bold text-[#1f2633] line-clamp-2 leading-snug">
@@ -1333,6 +1960,19 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                           <div className="flex items-center justify-between pt-2 mt-2 border-t border-gray-200/50 text-[10px] text-[#8a98ab]">
                             <span>{node.date}</span>
                             <div className="flex items-center gap-1.5">
+                              {/* Feature 5: AI Distillation Trigger Button */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDistillNode(node);
+                                }}
+                                disabled={distillingNodeId === node.id}
+                                className="p-1 rounded-lg hover:text-[#ea384c] hover:bg-white text-[#566579] transition-colors"
+                                title="调用 Gemini API 智能提炼核心认知摘要"
+                              >
+                                <Sparkles className={`w-3 h-3 text-[#ea384c] ${distillingNodeId === node.id ? 'animate-spin' : ''}`} />
+                              </button>
+
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1346,6 +1986,17 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                               <ChevronRight className="w-3.5 h-3.5 text-[#a0adc0]" />
                             </div>
                           </div>
+
+                          {/* Feature 5: Clustered Node Distilled Summary */}
+                          {distilledSummaries[node.id] && (
+                            <div className="mt-2 p-2 rounded-xl bg-gradient-to-r from-red-50 to-amber-50/70 border border-red-200/60 text-[10px] text-[#2c3645] flex items-start gap-1.5 shadow-xs">
+                              <Sparkles className="w-3 h-3 text-[#ea384c] shrink-0 mt-0.5" />
+                              <div className="leading-snug">
+                                <span className="font-extrabold text-[#ea384c] mr-1">AI 提炼:</span>
+                                <span>{distilledSummaries[node.id].summary}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1462,6 +2113,36 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
           if (target) setReaderWork(target);
         }}
         allWorks={WORK_ITEMS}
+      />
+
+      {/* Feature 1: Canvas Snapshot Modal */}
+      <SnapshotModal
+        isOpen={isSnapshotModalOpen}
+        onClose={() => setIsSnapshotModalOpen(false)}
+        currentConfig={currentSnapshotConfig}
+        onImportConfig={handleImportConfig}
+      />
+
+      {/* Feature 2: Connection Relation Label Modal */}
+      <RelationLabelModal
+        isOpen={isRelationModalOpen}
+        onClose={() => setIsRelationModalOpen(false)}
+        connectionId={activeRelationTarget?.id || 'library'}
+        sourceNodeName={activeRelationTarget?.source || '神经中枢骨干'}
+        targetNodeName={activeRelationTarget?.target || '作品库'}
+        currentLabel={activeRelationTarget ? relationLabels[activeRelationTarget.id] : undefined}
+        currentStrength={activeRelationTarget ? (connectionStrengths[activeRelationTarget.id] || 5) : 5}
+        onSaveLabel={handleSaveRelationLabel}
+        onRemoveLabel={handleRemoveRelationLabel}
+        onBoostStrength={handleBoostConnectionStrength}
+      />
+
+      {/* Feature 6: Knowledge Evolution Playback Bar */}
+      <EvolutionPlaybackBar
+        isOpen={isEvolutionPlaybackOpen}
+        onClose={() => setIsEvolutionPlaybackOpen(false)}
+        currentIndex={playbackMilestoneIndex}
+        onStepChange={setPlaybackMilestoneIndex}
       />
     </div>
   );
