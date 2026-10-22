@@ -1144,10 +1144,10 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                   }}
                   className={`absolute z-30 cursor-grab active:cursor-grabbing select-none transition-transform duration-150 ${
                     isDragging
-                      ? 'scale-105 shadow-2xl ring-2 ring-[#ea384c] z-40'
+                      ? 'scale-105 shadow-2xl z-40'
                       : isHovered
-                      ? 'scale-105 shadow-xl ring-2 ring-[#ea384c]/60'
-                      : 'hover:scale-[1.03]'
+                      ? 'scale-105 shadow-xl'
+                      : 'hover:scale-[1.02]'
                   }`}
                 >
                   <div
@@ -1155,11 +1155,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
                       e.stopPropagation();
                       handleOpenRelationModal(node.id, '神经中枢骨干', node.name);
                     }}
-                    className={`neuro-flat rounded-2xl p-3 border flex flex-col gap-2 max-w-[280px] ${
-                      isLibrary || isHovered
-                        ? 'border-red-300/90 ring-1 ring-[#ea384c]/30 shadow-lg'
-                        : 'border-white/90 shadow-sm'
-                    }`}
+                    className="neuro-flat rounded-2xl p-3 border border-white/90 shadow-sm hover:border-white/95 flex flex-col gap-2 max-w-[280px] transition-all"
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-xl bg-[#1d2330] flex items-center justify-center relative overflow-hidden shadow-inner shrink-0">
@@ -1235,7 +1231,7 @@ export const WorkbenchView: React.FC<WorkbenchViewProps> = ({
 
                     {/* Feature 5: Render Distilled Summary if available */}
                     {distilledSummaries[node.id] && (
-                      <div className="pt-1.5 mt-0.5 border-t border-gray-200/60 text-[10px] text-[#2c3546] bg-red-50/50 p-2 rounded-xl border border-red-100 flex items-start gap-1.5">
+                      <div className="pt-1.5 mt-0.5 border-t border-gray-100 text-[10px] text-[#2c3546] bg-gray-50/70 p-2 rounded-xl border border-gray-200/50 flex items-start gap-1.5">
                         <Sparkles className="w-3 h-3 text-[#ea384c] shrink-0 mt-0.5" />
                         <div className="leading-snug">
                           <span className="font-extrabold text-[#ea384c] mr-1">AI 提炼:</span>

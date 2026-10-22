@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', system-ui, -apple-system, sans-serif;
+}
+
 @layer base {
   :root {
     --bg-base: #ebedf2;
@@ -13,10 +17,13 @@
     --text-muted: #95a1b3;
   }
 
+  body, button, input, select, textarea {
+    font-family: 'Plus Jakarta Sans', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', system-ui, -apple-system, sans-serif;
+  }
+
   body {
     background-color: var(--bg-base);
     color: var(--text-primary);
-    font-family: 'Plus Jakarta Sans', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
     overflow-x: hidden;
     user-select: none;
     -webkit-font-smoothing: antialiased;
